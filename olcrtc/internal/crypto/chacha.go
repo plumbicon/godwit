@@ -10,6 +10,9 @@ import (
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
+// WireOverhead is the number of bytes added to each encrypted message.
+const WireOverhead = chacha20poly1305.NonceSizeX + chacha20poly1305.Overhead
+
 var (
 	// ErrInvalidKeySize is returned when the encryption key is not 32 bytes.
 	ErrInvalidKeySize = errors.New("invalid key size")

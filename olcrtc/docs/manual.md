@@ -10,7 +10,7 @@
 # Мануальная сборка
 
 Этот способ для тех кто хочет собрать бинарник руками без Docker/Podman.
-Нужен Go 1.26+, mage, git.
+Нужен Go 1.25+, mage, git.
 
 Проект в бете. По проблемам: t.me/openlibrecommunity
 
@@ -26,7 +26,7 @@ dnf install git       # Fedora / RHEL   / CentOS
 
 ---
 
-## Шаг 2: Установить Go 1.26+
+## Шаг 2: Установить Go 1.25+
 
 ### Arch / Fedora (всё просто)
 
@@ -51,28 +51,26 @@ Pin-Priority: 100
 EOF
 
 sudo apt update
-sudo apt install -t testing golang-1.26
+sudo apt install -t testing golang-go
 
 sudo update-alternatives --install /usr/bin/go go `which go` 10
 sudo update-alternatives --install /usr/bin/gofmt gofmt `which gofmt` 10
-sudo update-alternatives --install /usr/bin/go go /usr/lib/go-1.26/bin/go 20
-sudo update-alternatives --install /usr/bin/gofmt gofmt /usr/lib/go-1.26/bin/gofmt 20
 ```
 
 Иначе через SDK:
 
 ```sh
 apt install golang                         # ставим старый go - он нужен только чтобы скачать новый
-go install golang.org/dl/go1.26.0@latest   # скачиваем установщик go1.26
-~/go/bin/go1.26.0 download                 # скачиваем сам go1.26
-mv ~/go/bin/go1.26.0 /usr/local/bin/go     # заменяем системный go
+go install golang.org/dl/go1.25.0@latest   # скачиваем установщик go1.25
+~/go/bin/go1.25.0 download                 # скачиваем сам go1.25
+mv ~/go/bin/go1.25.0 /usr/local/bin/go     # заменяем системный go
 ```
 
 ### Проверка
 
 ```sh
 go version
-# go version go1.26.x linux/amd64
+# go version go1.25.x linux/amd64
 ```
 
 ---
@@ -143,55 +141,78 @@ openssl rand -hex 32
 
 ---
 
-## Шаг 7: Придумать client ID
-
-Это обязательный идентификатор клиента. Он должен совпадать на сервере и клиенте, иначе сервер отклонит соединение.
-
-```sh
-CLIENT_ID=default
-```
-
-Подойдёт любая короткая строка без пробелов: `home-laptop`, `android-01`, `archlinux`.
-
-Один `-client-id` технически может держать бесконечное количество одновременных соединений. Однако SFU ограничивает полосу пропускания на одного участника звонка, поэтому оптимально использовать схему **1 client-id = 1 пользователь** - но это не обязательное требование.
-
----
-
-## Шаг 8: Запустить сервер
+## Шаг 7: Запустить сервер
 
 На серверной машине (VPS и т.д.). Подбери нужную комбинацию carrier + transport из матрицы в [settings.md](settings.md).
 
-### wbstream + datachannel (рекомендуется - максимальная скорость и пинг)
+### jitsi + datachannel (рекомендуется)
 
-Сначала создай руму вручную через сайт [wbstream](https://stream.wb.ru) (автогенерация через `-mode gen` для wbstream больше не поддерживается) и сохрани её ID:
+Самый простой способ: используй любой self-hosted или публичный Jitsi Meet инстанс. Регистрация не нужна, имя комнаты выдумывается на лету. По умолчанию в примерах ниже — `meet.cryptopro.ru` (публичный CryptoPro Jitsi), но подойдёт любой другой (`meet.jit.si`, свой self-hosted и т.п.).
 
-```sh
-ROOM_ID="<room-id-со-stream.wb.ru>"
+Создай YAML конфиг:
+
+```yaml
+# server.yaml
+mode: srv
+link: direct
+auth:
+  provider: jitsi
+room:
+  id: "https://meet.cryptopro.ru/myroom"
+crypto:
+  key: "d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799"
+net:
+  transport: datachannel
+  dns: "1.1.1.1:53"
+data: data
 ```
 
-Затем запусти сервер:
+Запусти:
 
 ```sh
-./build/olcrtc-linux-amd64 \
-  -mode srv \
-  -carrier wbstream \
-  -transport datachannel \
-  -id "$ROOM_ID" \
-  -client-id "$CLIENT_ID" \
-  -key d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799 \
-  -link direct \
-  -dns 1.1.1.1:53 \
-  -data data
+./build/olcrtc-linux-amd64 server.yaml
+```
+
+Сервер сам присоединится к комнате (в качестве участника без камеры/микрофона) и будет ждать, пока клиент тоже зайдёт. Без второго участника Jicofo не выдаёт session-initiate — это особенность Jitsi.
+
+### wbstream + vp8channel (альтернатива)
+
+Создай руму через сайт [wbstream](https://stream.wb.ru) или заранее сгенерируй ID через `mode: gen` с `auth.provider: wbstream`.
+
+`wbstream + datachannel` **не работает** в обычном guest flow — WB Stream выдаёт токены с `canPublishData=false`, и DC не маршрутизирует данные. Для обычного использования выбирай `vp8channel`.
+
+Создай YAML конфиг:
+
+```yaml
+# server.yaml
+mode: srv
+link: direct
+auth:
+  provider: wbstream
+room:
+  id: "<room-id-со-stream.wb.ru>"
+crypto:
+  key: "d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799"
+net:
+  transport: vp8channel
+  dns: "1.1.1.1:53"
+data: data
+```
+
+Запусти:
+
+```sh
+./build/olcrtc-linux-amd64 server.yaml
 ```
 
 Room ID нужно передать клиенту.
 
 ### Добавить отладку
 
-Добавь `--debug` к любой команде - увидишь каждое соединение:
+Добавь `debug: true` в YAML конфиг - увидишь каждое соединение:
 
 ```
-2026/05/03 08:05:23 Connecting link via direct/datachannel/wbstream...
+2026/05/03 08:05:23 Connecting link via direct/vp8channel/wbstream...
 2026/05/03 08:05:25 wbstream publisher state: connected
 2026/05/03 08:05:27 Link connected
 2026/05/03 08:05:43 sid=3 connect icanhazip.com:443
@@ -200,60 +221,99 @@ Room ID нужно передать клиенту.
 
 ---
 
-## Шаг 9: Запустить клиент
+## Шаг 8: Запустить клиент
 
-На своей машине. Carrier, transport, id, `client-id` и key должны совпадать с сервером.
+На своей машине. Auth provider, transport, room ID и key должны совпадать с сервером.
 
-### wbstream + datachannel
+### jitsi + datachannel (рекомендуется)
+
+```yaml
+# client.yaml
+mode: cnc
+link: direct
+auth:
+  provider: jitsi
+room:
+  id: "https://meet.cryptopro.ru/myroom"
+crypto:
+  key: "<hex-key-такой-же-как-на-сервере>"
+net:
+  transport: datachannel
+  dns: "1.1.1.1:53"
+socks:
+  host: "127.0.0.1"
+  port: 8808
+data: data
+```
 
 ```sh
-./build/olcrtc-linux-amd64 \
-  -mode cnc \
-  -carrier wbstream \
-  -transport datachannel \
-  -id abc123xyz \
-  -client-id "$CLIENT_ID" \
-  -key <hex-key> \
-  -link direct \
-  -dns 1.1.1.1:53 \
-  -data data \
-  -socks-host 127.0.0.1 \
-  -socks-port 1080
+./build/olcrtc-linux-amd64 client.yaml
+```
+
+После запуска SOCKS5 будет слушать на `127.0.0.1:8808`. Используй любой клиент с поддержкой SOCKS5 (`curl --socks5 127.0.0.1:8808 ...`, браузер с переключателем прокси и т.п.).
+
+### wbstream + vp8channel (альтернатива)
+
+```yaml
+# client.yaml
+mode: cnc
+link: direct
+auth:
+  provider: wbstream
+room:
+  id: "<room-id>"
+crypto:
+  key: "<hex-key>"
+net:
+  transport: vp8channel
+  dns: "1.1.1.1:53"
+socks:
+  host: "127.0.0.1"
+  port: 8808
+data: data
+```
+
+```sh
+./build/olcrtc-linux-amd64 client.yaml
 ```
 
 После старта в логах появится:
 
 ```
-SOCKS5 server listening on 127.0.0.1:1080
+SOCKS5 server listening on 127.0.0.1:8808
 ```
 
-Если нужно защитить прокси логином и паролем (например на машине с несколькими пользователями), добавь `-socks-user` и `-socks-pass`:
+Если нужно защитить прокси логином и паролем (например на машине с несколькими пользователями), добавь `socks.user` и `socks.pass` в конфиг:
 
-```sh
-./build/olcrtc-linux-amd64 \
-  -mode cnc \
-  -carrier wbstream \
-  -transport datachannel \
-  -id abc123xyz \
-  -client-id "$CLIENT_ID" \
-  -key <hex-key> \
-  -link direct \
-  -dns 1.1.1.1:53 \
-  -data data \
-  -socks-host 127.0.0.1 \
-  -socks-port 1080 \
-  -socks-user myuser \
-  -socks-pass mypass
+```yaml
+# client.yaml
+mode: cnc
+link: direct
+auth:
+  provider: wbstream
+room:
+  id: "<room-id>"
+crypto:
+  key: "<hex-key>"
+net:
+  transport: vp8channel
+  dns: "1.1.1.1:53"
+socks:
+  host: "127.0.0.1"
+  port: 8808
+  user: myuser
+  pass: mypass
+data: data
 ```
 
-Без этих флагов аутентификация отключена - поведение прежнее.
+Без этих полей аутентификация отключена - поведение прежнее.
 
 ---
 
-## Шаг 10: Проверить
+## Шаг 9: Проверить
 
 ```sh
-curl --socks5-hostname 127.0.0.1:1080 https://icanhazip.com
+curl --socks5-hostname 127.0.0.1:8808 https://icanhazip.com
 ```
 
 Должен вернуть IP сервера.
@@ -261,7 +321,7 @@ curl --socks5-hostname 127.0.0.1:1080 https://icanhazip.com
 Или выставить переменную чтобы весь трафик шёл через прокси:
 
 ```sh
-export all_proxy=socks5h://127.0.0.1:1080
+export all_proxy=socks5h://127.0.0.1:8808
 curl https://icanhazip.com
 ```
 
@@ -271,17 +331,20 @@ curl https://icanhazip.com
 
 ```sh
 mage build    # собрать для текущей платформы
+mage buildCLI # собрать только CLI бинарник
 mage cross    # собрать для всех платформ
 mage deps     # скачать и обновить зависимости
 mage clean    # удалить build/
 mage test     # запустить тесты
+mage e2e      # запустить E2E тесты (нужны реальные провайдеры)
 mage lint     # запустить линтер
 mage podman   # собрать образ через podman
 mage docker   # собрать образ через docker
+mage mobile   # собрать Android AAR
 ```
 
 ---
 
 Используешь скрипты вместо ручной сборки? -> [Быстрый старт](fast.md)
 
-Все флаги и матрица совместимости -> [settings.md](settings.md)
+Все настройки и матрица совместимости -> [settings.md](settings.md)

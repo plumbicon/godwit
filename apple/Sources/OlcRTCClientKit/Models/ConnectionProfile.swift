@@ -1,6 +1,7 @@
 import Foundation
 
 public enum Carrier: String, CaseIterable, Codable, Identifiable {
+    case jitsi
     case telemost
     case jazz
     case wbstream
@@ -9,9 +10,19 @@ public enum Carrier: String, CaseIterable, Codable, Identifiable {
 
     public var title: String {
         switch self {
+        case .jitsi: "Jitsi"
         case .telemost: "Telemost"
         case .jazz: "Jazz"
         case .wbstream: "WBStream"
+        }
+    }
+
+    public var recommendedTransport: Transport {
+        switch self {
+        case .jitsi, .jazz:
+            .datachannel
+        case .telemost, .wbstream:
+            .vp8channel
         }
     }
 }
@@ -80,7 +91,7 @@ public struct ConnectionProfile: Codable, Equatable, Identifiable {
         socksPort: Int = 60_180,
         socksUser: String = "",
         socksPass: String = "",
-        dnsServer: String = "77.88.8.8",
+        dnsServer: String = "77.88.8.8:53",
         debugLogging: Bool = false,
         vp8FPS: Int = 60,
         vp8BatchSize: Int = 64,
@@ -178,7 +189,7 @@ public struct ConnectionProfile: Codable, Equatable, Identifiable {
         socksPort = try container.decodeIfPresent(Int.self, forKey: .socksPort) ?? 60_180
         socksUser = try container.decodeIfPresent(String.self, forKey: .socksUser) ?? ""
         socksPass = try container.decodeIfPresent(String.self, forKey: .socksPass) ?? ""
-        dnsServer = try container.decodeIfPresent(String.self, forKey: .dnsServer) ?? "77.88.8.8"
+        dnsServer = try container.decodeIfPresent(String.self, forKey: .dnsServer) ?? "77.88.8.8:53"
         debugLogging = try container.decodeIfPresent(Bool.self, forKey: .debugLogging) ?? false
         vp8FPS = try container.decodeIfPresent(Int.self, forKey: .vp8FPS) ?? 60
         vp8BatchSize = try container.decodeIfPresent(Int.self, forKey: .vp8BatchSize) ?? 64

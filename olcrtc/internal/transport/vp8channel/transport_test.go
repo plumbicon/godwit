@@ -115,7 +115,8 @@ func testEpochHdr(epoch uint32) [epochHdrLen]byte {
 	var hdr [epochHdrLen]byte
 	copy(hdr[:], vp8Keepalive)
 	binary.BigEndian.PutUint32(hdr[tokenOff:epochOff], bindingToken("test"))
-	binary.BigEndian.PutUint32(hdr[epochOff:], epoch)
+	binary.BigEndian.PutUint32(hdr[epochOff:crcOff], epoch)
+	binary.BigEndian.PutUint32(hdr[crcOff:epochHdrLen], epochCRC(bindingToken("test"), epoch))
 	return hdr
 }
 
@@ -132,7 +133,8 @@ func TestHandleIncomingFrameIgnoresLoopedBackLocalEpoch(t *testing.T) {
 	frame := make([]byte, epochHdrLen+4)
 	copy(frame, vp8Keepalive)
 	binary.BigEndian.PutUint32(frame[tokenOff:epochOff], tr.bindingToken)
-	binary.BigEndian.PutUint32(frame[epochOff:], tr.localEpoch)
+	binary.BigEndian.PutUint32(frame[epochOff:crcOff], tr.localEpoch)
+	binary.BigEndian.PutUint32(frame[crcOff:epochHdrLen], epochCRC(tr.bindingToken, tr.localEpoch))
 	copy(frame[epochHdrLen:], []byte{1, 2, 3, 4})
 
 	tr.handleIncomingFrame(frame)
@@ -160,8 +162,10 @@ func TestHandleIncomingFrameIgnoresForeignBindingToken(t *testing.T) {
 
 	frame := make([]byte, epochHdrLen+4)
 	copy(frame, vp8Keepalive)
-	binary.BigEndian.PutUint32(frame[tokenOff:epochOff], bindingToken("other-client"))
-	binary.BigEndian.PutUint32(frame[epochOff:], 999)
+	otherToken := bindingToken("other-client")
+	binary.BigEndian.PutUint32(frame[tokenOff:epochOff], otherToken)
+	binary.BigEndian.PutUint32(frame[epochOff:crcOff], 999)
+	binary.BigEndian.PutUint32(frame[crcOff:epochHdrLen], epochCRC(otherToken, 999))
 	copy(frame[epochHdrLen:], []byte{1, 2, 3, 4})
 
 	tr.handleIncomingFrame(frame)

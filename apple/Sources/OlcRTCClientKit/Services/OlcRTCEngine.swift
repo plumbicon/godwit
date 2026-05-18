@@ -38,7 +38,7 @@ public struct OlcRTCStartOptions: Equatable {
         socksPort = profile.socksPort
         socksUser = profile.socksUser
         socksPass = profile.socksPass
-        dnsServer = profile.dnsServer
+        dnsServer = Self.normalizedDNSServer(profile.dnsServer)
         debugLogging = profile.debugLogging
         vp8FPS = profile.vp8FPS
         vp8BatchSize = profile.vp8BatchSize
@@ -57,6 +57,14 @@ public struct OlcRTCStartOptions: Equatable {
         videoTileModule = profile.videoTileModule
         videoTileRS = profile.videoTileRS
         startTimeoutMillis = profile.startTimeoutMillis
+    }
+
+    private static func normalizedDNSServer(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.contains(":") else {
+            return trimmed
+        }
+        return "\(trimmed):53"
     }
 }
 

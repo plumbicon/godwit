@@ -92,8 +92,8 @@ olcrtc://...
 Каждая строка сервера содержит один `olcrtc`-URI в формате из [uri.md](uri.md):
 
 ```text
-olcrtc://<Carrier>?<Transport>@<RoomID>#<EncryptionKey>%<ClientID>$<MIMO>
-olcrtc://<Carrier>?<Transport><key=value&key=value>@<RoomID>#<EncryptionKey>%<ClientID>$<MIMO>
+olcrtc://<Auth>?<Transport>@<RoomID>#<EncryptionKey>$<MIMO>
+olcrtc://<Auth>?<Transport><key=value&key=value>@<RoomID>#<EncryptionKey>$<MIMO>
 ```
 
 Одна строка = один сервер/одна запись подписки.
@@ -141,7 +141,7 @@ olcrtc://<Carrier>?<Transport><key=value&key=value>@<RoomID>#<EncryptionKey>%<Cl
 #used: 10mb/10gb
 #available: 9.99gb
 
-olcrtc://wbstream?seichannel<fps=60&batch=64&frag=900&ack-ms=2000>@room-01#d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799%android-01$RU / olcng free sub / IPv6
+olcrtc://wbstream?seichannel<fps=60&batch=64&frag=900&ack-ms=2000>@room-01#d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799$RU / olcng free sub / IPv6
 ##name: RU-1
 ##icon: 🇷🇺
 ##color: #4A90E2
@@ -150,11 +150,11 @@ olcrtc://wbstream?seichannel<fps=60&batch=64&frag=900&ack-ms=2000>@room-01#d823f
 ##ip: 203.0.113.10
 ##comment: basic free node
 
-olcrtc://wbstream?datachannel@abc123xyz#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa%android-01$DE / backup / IPv4
+olcrtc://wbstream?datachannel@abc123xyz#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa$DE / backup / IPv4
 ##name: DE-Backup
 ##icon: 🇩🇪
 ##color: #2EBD85
-##comment: reserve route, wbstream+datachannel - max speed
+##comment: reserve route, wbstream+datachannel does not work in guest flow
 ```
 
 ## Имплементация клиента для подписок
@@ -165,4 +165,4 @@ olcrtc://wbstream?datachannel@abc123xyz#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 
 URI-формат для отдельного сервера: [uri.md](uri.md)
 
-Матрица совместимости carrier + transport: [settings.md](settings.md)
+Матрица совместимости auth + transport: [settings.md](settings.md)

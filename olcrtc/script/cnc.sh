@@ -7,18 +7,23 @@ set -e
 
 PODMAN_ID=$(tr -dc 'a-z0-9' </dev/urandom | head -c 8)
 CONTAINER_NAME="olcrtc-client-$PODMAN_ID"
-IMAGE_NAME="docker.io/library/golang:1.26-alpine"
+IMAGE_NAME="docker.io/library/golang:1.25-alpine3.22"
 REPO_URL="https://github.com/openlibrecommunity/olcrtc.git"
 WORK_DIR="/tmp/olcrtc-client-$PODMAN_ID"
 
 SOCKS_IP="127.0.0.1"
 SOCKS_PORT="8808"
 BRANCH="master"
+NO_CACHE=0
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --branch=*)
             BRANCH="${1#*=}"
+            shift
+            ;;
+        --no-cache)
+            NO_CACHE=1
             shift
             ;;
         *)
@@ -67,25 +72,39 @@ fi
 
 echo "[+] Using Podman"
 echo ""
-echo "Select carrier:"
-echo "  1) telemost"
-echo "  2) jazz"
-echo "  3) wbstream"
-read -p "Enter choice [1-3, default: 1]: " CARRIER_CHOICE
 
-case "$CARRIER_CHOICE" in
+validate_key() {
+    case "$1" in
+        *[!0-9a-fA-F]*)
+            return 1
+            ;;
+    esac
+    [ "${#1}" -eq 64 ]
+}
+
+echo "Select auth provider:"
+echo "  1) jitsi"
+echo "  2) telemost"
+echo "  3) jazz"
+echo "  4) wbstream"
+read -p "Enter choice [1-4, default: 1]: " AUTH_CHOICE
+
+case "$AUTH_CHOICE" in
     2)
-        CARRIER="jazz"
+        AUTH="telemost"
         ;;
     3)
-        CARRIER="wbstream"
+        AUTH="jazz"
+        ;;
+    4)
+        AUTH="wbstream"
         ;;
     *)
-        CARRIER="telemost"
+        AUTH="jitsi"
         ;;
 esac
 
-echo "[*] Using carrier: $CARRIER"
+echo "[*] Using auth: $AUTH"
 echo ""
 
 echo "Select transport:"
@@ -113,16 +132,33 @@ esac
 echo "[*] Using transport: $TRANSPORT"
 echo ""
 
-read -p "Enter Room ID: " ROOM_ID
+if [ "$AUTH" = "jitsi" ]; then
+    read -p "Jitsi base URL [default: https://meet.cryptopro.ru/]: " JITSI_BASE_INPUT
+    JITSI_BASE_URL=${JITSI_BASE_INPUT:-https://meet.cryptopro.ru/}
+    JITSI_BASE_URL="${JITSI_BASE_URL%/}"
 
-if [ -z "$ROOM_ID" ]; then
-    echo "[X] Room ID cannot be empty"
-    exit 1
+    read -p "Enter Jitsi room name or URL: " JITSI_ROOM_INPUT
+    if [ -z "$JITSI_ROOM_INPUT" ]; then
+        echo "[X] Jitsi room name/URL cannot be empty"
+        exit 1
+    fi
+
+    case "$JITSI_ROOM_INPUT" in
+        http://*|https://*|*/*)
+            ROOM_ID="$JITSI_ROOM_INPUT"
+            ;;
+        *)
+            ROOM_ID="$JITSI_BASE_URL/$JITSI_ROOM_INPUT"
+            ;;
+    esac
+else
+    read -p "Enter Room ID: " ROOM_ID
 fi
 
-echo ""
-read -p "Enter Client ID [default: default]: " CLIENT_ID_INPUT
-CLIENT_ID=${CLIENT_ID_INPUT:-default}
+if [ -z "$ROOM_ID" ]; then
+    echo "[X] Room ID/URL cannot be empty"
+    exit 1
+fi
 
 echo ""
 read -p "Enter Encryption Key (hex): " KEY
@@ -132,9 +168,14 @@ if [ -z "$KEY" ]; then
     exit 1
 fi
 
+if ! validate_key "$KEY"; then
+    echo "[X] Encryption key must be 64 hex characters"
+    exit 1
+fi
+
 echo ""
-read -p "DNS server [default: 1.1.1.1:53]: " DNS_INPUT
-DNS=${DNS_INPUT:-1.1.1.1:53}
+read -p "DNS server [default: 8.8.8.8:53]: " DNS_INPUT
+DNS=${DNS_INPUT:-8.8.8.8:53}
 
 echo ""
 read -p "SOCKS5 ip [default: 127.0.0.1]: " IP_INPUT
@@ -148,13 +189,30 @@ echo ""
 read -p "SOCKS5 username (leave empty to disable auth): " SOCKS_USER_INPUT
 SOCKS_USER=${SOCKS_USER_INPUT:-}
 
+SOCKS_PASS=""
 if [ -n "$SOCKS_USER" ]; then
     read -s -p "SOCKS5 password: " SOCKS_PASS_INPUT
     echo ""
     SOCKS_PASS=${SOCKS_PASS_INPUT:-}
 fi
 
-TRANSPORT_ARGS=()
+case "$SOCKS_IP" in
+    127.*|localhost|::1|\[::1\])
+        ;;
+    *)
+        if [ -z "$SOCKS_USER" ] || [ -z "$SOCKS_PASS" ]; then
+            echo "[X] SOCKS auth required when binding outside loopback (set username and password)"
+            exit 1
+        fi
+        ;;
+esac
+
+# Transport-specific settings
+VIDEO_W=1920; VIDEO_H=1080; VIDEO_FPS=30; VIDEO_BITRATE="2M"; VIDEO_HW="none"
+VIDEO_CODEC="qrcode"; VIDEO_QR_SIZE=0; VIDEO_QR_RECOVERY="low"
+VIDEO_TILE_MODULE=4; VIDEO_TILE_RS=20
+VP8_FPS=25; VP8_BATCH=1
+SEI_FPS=60; SEI_BATCH=64; SEI_FRAG=900; SEI_ACK=2000
 
 if [ "$TRANSPORT" = "videochannel" ]; then
     echo ""
@@ -178,8 +236,6 @@ if [ "$TRANSPORT" = "videochannel" ]; then
 
             read -p "Tile Reed-Solomon parity percent 0..200 [default: 20]: " VTILE_RS_INPUT
             VIDEO_TILE_RS=${VTILE_RS_INPUT:-20}
-
-            TRANSPORT_ARGS+=(-video-tile-module "$VIDEO_TILE_MODULE" -video-tile-rs "$VIDEO_TILE_RS")
             ;;
         *)
             VIDEO_CODEC="qrcode"
@@ -195,11 +251,6 @@ if [ "$TRANSPORT" = "videochannel" ]; then
 
             read -p "QR fragment size bytes [default: 0 (auto)]: " VQRSZ_INPUT
             VIDEO_QR_SIZE=${VQRSZ_INPUT:-0}
-
-            if [ "$VIDEO_QR_SIZE" -gt 0 ]; then
-                TRANSPORT_ARGS+=(-video-qr-size "$VIDEO_QR_SIZE")
-            fi
-            TRANSPORT_ARGS+=(-video-qr-recovery "$VIDEO_QR_RECOVERY")
             ;;
     esac
 
@@ -211,9 +262,6 @@ if [ "$TRANSPORT" = "videochannel" ]; then
 
     read -p "Hardware acceleration (none/nvenc) [default: none]: " VHW_INPUT
     VIDEO_HW=${VHW_INPUT:-none}
-
-    TRANSPORT_ARGS+=(-video-w "$VIDEO_W" -video-h "$VIDEO_H" -video-fps "$VIDEO_FPS" \
-        -video-bitrate "$VIDEO_BITRATE" -video-hw "$VIDEO_HW" -video-codec "$VIDEO_CODEC")
 fi
 
 if [ "$TRANSPORT" = "vp8channel" ]; then
@@ -225,68 +273,147 @@ if [ "$TRANSPORT" = "vp8channel" ]; then
 
     read -p "VP8 batch size (frames per tick) [default: 1]: " VP8BATCH_INPUT
     VP8_BATCH=${VP8BATCH_INPUT:-1}
-
-    TRANSPORT_ARGS+=(-vp8-fps "$VP8_FPS" -vp8-batch "$VP8_BATCH")
 fi
 
 if [ "$TRANSPORT" = "seichannel" ]; then
     echo ""
     echo "--- SEIchannel settings ---"
 
-    read -p "SEI FPS [default: 20]: " SEIFPS_INPUT
-    SEI_FPS=${SEIFPS_INPUT:-20}
+    read -p "SEI FPS [default: 60]: " SEIFPS_INPUT
+    SEI_FPS=${SEIFPS_INPUT:-60}
 
-    read -p "SEI batch size (frames per tick) [default: 1]: " SEIBATCH_INPUT
-    SEI_BATCH=${SEIBATCH_INPUT:-1}
+    read -p "SEI batch size (frames per tick) [default: 64]: " SEIBATCH_INPUT
+    SEI_BATCH=${SEIBATCH_INPUT:-64}
 
     read -p "SEI fragment size in bytes [default: 900]: " SEIFRAG_INPUT
     SEI_FRAG=${SEIFRAG_INPUT:-900}
 
-    read -p "SEI ACK timeout in milliseconds [default: 3000]: " SEIACK_INPUT
-    SEI_ACK=${SEIACK_INPUT:-3000}
-
-    TRANSPORT_ARGS+=(-fps "$SEI_FPS" -batch "$SEI_BATCH" -frag "$SEI_FRAG" -ack-ms "$SEI_ACK")
+    read -p "SEI ACK timeout in milliseconds [default: 2000]: " SEIACK_INPUT
+    SEI_ACK=${SEIACK_INPUT:-2000}
 fi
 
 echo ""
 echo "[*] Cleaning workspace..."
-rm -rf $WORK_DIR
-mkdir -p $WORK_DIR
+rm -rf "$WORK_DIR"
+mkdir -p "$WORK_DIR"
+
+CACHE_DIR="${OLCRTC_CACHE_DIR:-$HOME/.cache/olcrtc}"
+GOMOD_CACHE="$CACHE_DIR/gomod"
+GO_BUILD_CACHE="$CACHE_DIR/gobuild"
+
+if [ "$NO_CACHE" = "1" ]; then
+    echo "[*] --no-cache: purging Go cache at $CACHE_DIR"
+    chmod -R u+w "$GOMOD_CACHE" "$GO_BUILD_CACHE" 2>/dev/null || true
+    if ! rm -rf "$GOMOD_CACHE" "$GO_BUILD_CACHE" 2>/dev/null; then
+        echo "[*] Falling back to in-container purge (files owned by container UID)..."
+        podman run --rm \
+            -v "$CACHE_DIR":/cache:Z \
+            "$IMAGE_NAME" \
+            sh -c 'rm -rf /cache/gomod /cache/gobuild'
+    fi
+fi
+
+mkdir -p "$GOMOD_CACHE" "$GO_BUILD_CACHE"
+echo "[*] Using Go cache: $CACHE_DIR"
 
 echo "[*] Cloning repository..."
-git clone --depth 1 --recurse-submodules --branch "$BRANCH" $REPO_URL $WORK_DIR
+git clone --depth 1 --recurse-submodules --branch "$BRANCH" "$REPO_URL" "$WORK_DIR"
 
 echo "[*] Pulling Go image..."
-podman pull $IMAGE_NAME
+podman pull "$IMAGE_NAME"
 
 echo "[*] Building OlcRTC..."
 podman run --rm \
-    -v $WORK_DIR:/app:Z \
+    --add-host=host.containers.internal:host-gateway \
+    -v "$WORK_DIR":/app:Z \
+    -v "$GOMOD_CACHE":/go/pkg/mod:Z \
+    -v "$GO_BUILD_CACHE":/root/.cache/go-build:Z \
     -w /app \
-    $IMAGE_NAME \
-    sh -c "go mod tidy && go build -o olcrtc cmd/olcrtc/main.go"
+    "$IMAGE_NAME" \
+    sh -c "go mod download && go build -trimpath -ldflags='-s -w' -o olcrtc ./cmd/olcrtc"
 
 if [ ! -f "$WORK_DIR/olcrtc" ]; then
     echo "[X] Build failed"
     exit 1
 fi
 
-AUTH_ARGS=()
+# Generate YAML config
+CONFIG_FILE="$WORK_DIR/client.yaml"
+cat > "$CONFIG_FILE" <<EOF
+mode: cnc
+auth:
+  provider: "$AUTH"
+room:
+  id: "$ROOM_ID"
+crypto:
+  key: "$KEY"
+net:
+  transport: "$TRANSPORT"
+  dns: "$DNS"
+socks:
+  host: "$SOCKS_IP"
+  port: $SOCKS_PORT
+EOF
+
 if [ -n "$SOCKS_USER" ]; then
-    AUTH_ARGS+=(-socks-user "$SOCKS_USER" -socks-pass "$SOCKS_PASS")
+    cat >> "$CONFIG_FILE" <<EOF
+  user: "$SOCKS_USER"
+  pass: "$SOCKS_PASS"
+EOF
 fi
 
+if [ "$TRANSPORT" = "vp8channel" ]; then
+    cat >> "$CONFIG_FILE" <<EOF
+vp8:
+  fps: $VP8_FPS
+  batch_size: $VP8_BATCH
+EOF
+fi
+
+if [ "$TRANSPORT" = "seichannel" ]; then
+    cat >> "$CONFIG_FILE" <<EOF
+sei:
+  fps: $SEI_FPS
+  batch_size: $SEI_BATCH
+  fragment_size: $SEI_FRAG
+  ack_timeout_ms: $SEI_ACK
+EOF
+fi
+
+if [ "$TRANSPORT" = "videochannel" ]; then
+    cat >> "$CONFIG_FILE" <<EOF
+video:
+  width: $VIDEO_W
+  height: $VIDEO_H
+  fps: $VIDEO_FPS
+  bitrate: "$VIDEO_BITRATE"
+  hw: $VIDEO_HW
+  codec: $VIDEO_CODEC
+  qr_size: $VIDEO_QR_SIZE
+  qr_recovery: $VIDEO_QR_RECOVERY
+  tile_module: $VIDEO_TILE_MODULE
+  tile_rs: $VIDEO_TILE_RS
+EOF
+fi
+
+cat >> "$CONFIG_FILE" <<EOF
+data: data
+debug: false
+EOF
+
 echo "[*] Starting OlcRTC client..."
+START_CMD="./olcrtc client.yaml"
+if [ "$TRANSPORT" = "videochannel" ]; then
+    START_CMD="apk add --no-cache ffmpeg >/dev/null && ./olcrtc client.yaml"
+fi
 podman run -d \
-    --name $CONTAINER_NAME \
+    --name "$CONTAINER_NAME" \
+    --network host \
     --restart unless-stopped \
-    -p $SOCKS_IP:$SOCKS_PORT:$SOCKS_PORT \
-    -v $WORK_DIR:/app:Z \
+    -v "$WORK_DIR":/app:Z \
     -w /app \
-    $IMAGE_NAME \
-    ./olcrtc -mode cnc -carrier "$CARRIER" -id "$ROOM_ID" -client-id "$CLIENT_ID" -key "$KEY" \
-        -link direct -transport "$TRANSPORT" -dns "$DNS" -data data \
-        -socks-host 0.0.0.0 -socks-port "$SOCKS_PORT" "${TRANSPORT_ARGS[@]}" "${AUTH_ARGS[@]}"
+    "$IMAGE_NAME" \
+    sh -c "$START_CMD"
 
 sleep 2
 
@@ -294,10 +421,9 @@ echo ""
 echo "[+] Client started successfully!"
 echo ""
 echo "Container name: $CONTAINER_NAME"
-echo "Carrier:        $CARRIER"
+echo "Auth:           $AUTH"
 echo "Transport:      $TRANSPORT"
-echo "Room ID:        $ROOM_ID"
-echo "Client ID:      $CLIENT_ID"
+echo "Room ID/URL:    $ROOM_ID"
 if [ -n "$SOCKS_USER" ]; then
 echo "SOCKS5 proxy:   $SOCKS_IP:$SOCKS_PORT (auth: $SOCKS_USER)"
 else
@@ -312,9 +438,8 @@ echo "  podman stop $CONTAINER_NAME"
 echo ""
 echo "Test proxy:"
 if [ -n "$SOCKS_USER" ]; then
-echo "  export all_proxy=socks5h://$SOCKS_USER:$SOCKS_PASS@$SOCKS_IP:$SOCKS_PORT"
+echo "  curl --socks5-hostname $SOCKS_USER:$SOCKS_PASS@$SOCKS_IP:$SOCKS_PORT https://icanhazip.com"
 else
-echo "  export all_proxy=socks5h://$SOCKS_IP:$SOCKS_PORT"
+echo "  curl --socks5-hostname $SOCKS_IP:$SOCKS_PORT https://icanhazip.com"
 fi
-echo "  curl -fsSL https://ifconfig.me"
 echo ""

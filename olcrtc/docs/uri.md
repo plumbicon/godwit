@@ -12,15 +12,15 @@
 
 Этот документ описывает **соглашение для разработчиков клиентских приложений**, которым нужен компактный способ передавать параметры подключения `olcrtc`.
 
-Текущий `olcrtc` не парсит такой URI автоматически. Если клиентское приложение хочет использовать эту запись, оно должно само разобрать строку и передать полученные поля в свои вызовы `olcrtc`.
+Текущий `olcrtc` не парсит такой URI автоматически. Если клиентское приложение хочет использовать эту запись, оно должно само разобрать строку и передать полученные поля в YAML конфиг `olcrtc`.
 
 ---
 
 ## Формат
 
 ```text
-olcrtc://<Carrier>?<Transport>@<RoomID>#<EncryptionKey>%<ClientID>$<MIMO>
-olcrtc://<Carrier>?<Transport><key=value&key=value>@<RoomID>#<EncryptionKey>%<ClientID>$<MIMO>
+olcrtc://<Auth>?<Transport>@<RoomID>#<EncryptionKey>$<MIMO>
+olcrtc://<Auth>?<Transport><key=value&key=value>@<RoomID>#<EncryptionKey>$<MIMO>
 ```
 
 Все поля после `olcrtc://` считаются частью клиентского соглашения.
@@ -33,12 +33,11 @@ olcrtc://<Carrier>?<Transport><key=value&key=value>@<RoomID>#<EncryptionKey>%<Cl
 
 | Поле | Значение |
 |------|----------|
-| `<Carrier>` | Имя carrier, например `telemost`, `jazz`, `wbstream` |
+| `<Auth>` | Имя auth-провайдера, например `telemost`, `jazz`, `wbstream`, `jitsi` |
 | `<Transport>` | Имя транспорта, например `datachannel`, `vp8channel`, `seichannel`, `videochannel` |
-| payload | Параметры транспорта в `<key=value&...>`. Ключи совпадают с CLI-флагами без дефиса. Блок опускается если используются defaults |
-| `<RoomID>` | Идентификатор комнаты или carrier-specific room URL/ID |
+| payload | Параметры транспорта в `<key=value&...>`. Ключи совпадают с YAML полями. Блок опускается если используются defaults |
+| `<RoomID>` | Идентификатор комнаты или auth-specific room URL/ID |
 | `<EncryptionKey>` | Ключ шифрования в hex, обычно 64 символа (`32` байта) |
-| `<ClientID>` | Идентификатор клиента. Должен совпадать с ожидаемым значением на сервере. Один client-id может держать бесконечное количество соединений, но SFU ограничивает полосу на участника — оптимально 1 client-id = 1 пользователь (не обязательно) |
 | `<MIMO>` | Свободный комментарий для UI/метаданных, например `RU / olc free sub / IPv6` |
 
 ---
@@ -51,50 +50,49 @@ Payload не используется.
 
 ### vp8channel
 
-| Ключ | CLI-флаг | Описание |
-|------|----------|----------|
-| `vp8-fps` | `-vp8-fps` | FPS VP8 потока |
-| `vp8-batch` | `-vp8-batch` | Кадров за тик |
+| Ключ | YAML поле | Описание |
+|------|-----------|----------|
+| `vp8-fps` | `vp8.fps` | FPS VP8 потока |
+| `vp8-batch` | `vp8.batch_size` | Кадров за тик |
 
 ### seichannel
 
-| Ключ | CLI-флаг | Описание |
-|------|----------|----------|
-| `fps` | `-fps` | FPS H264 потока |
-| `batch` | `-batch` | Кадров за тик |
-| `frag` | `-frag` | Размер фрагмента в байтах |
-| `ack-ms` | `-ack-ms` | Таймаут ACK в миллисекундах |
+| Ключ | YAML поле | Описание |
+|------|-----------|----------|
+| `fps` | `sei.fps` | FPS H264 потока |
+| `batch` | `sei.batch_size` | Кадров за тик |
+| `frag` | `sei.fragment_size` | Размер фрагмента в байтах |
+| `ack-ms` | `sei.ack_timeout_ms` | Таймаут ACK в миллисекундах |
 
 ### videochannel
 
-| Ключ | CLI-флаг | Описание |
-|------|----------|----------|
-| `video-w` | `-video-w` | Ширина в пикселях |
-| `video-h` | `-video-h` | Высота в пикселях |
-| `video-fps` | `-video-fps` | FPS |
-| `video-bitrate` | `-video-bitrate` | Битрейт, например `5000k` или `2M` |
-| `video-hw` | `-video-hw` | Аппаратное ускорение: `none` или `nvenc` |
-| `video-codec` | `-video-codec` | `qrcode` или `tile` |
-| `video-qr-size` | `-video-qr-size` | Размер фрагмента QR в байтах |
-| `video-qr-recovery` | `-video-qr-recovery` | Коррекция ошибок: `low` / `medium` / `high` / `highest` |
-| `video-tile-module` | `-video-tile-module` | Размер тайла в пикселях 1..270 (только `tile`) |
-| `video-tile-rs` | `-video-tile-rs` | Reed-Solomon паритет % 0..200 (только `tile`) |
+| Ключ | YAML поле | Описание |
+|------|-----------|----------|
+| `video-w` | `video.width` | Ширина в пикселях |
+| `video-h` | `video.height` | Высота в пикселях |
+| `video-fps` | `video.fps` | FPS |
+| `video-bitrate` | `video.bitrate` | Битрейт, например `5000k` или `2M` |
+| `video-hw` | `video.hw` | Аппаратное ускорение: `none` или `nvenc` |
+| `video-codec` | `video.codec` | `qrcode` или `tile` |
+| `video-qr-size` | `video.qr_size` | Размер фрагмента QR в байтах |
+| `video-qr-recovery` | `video.qr_recovery` | Коррекция ошибок: `low` / `medium` / `high` / `highest` |
+| `video-tile-module` | `video.tile_module` | Размер тайла в пикселях 1..270 (только `tile`) |
+| `video-tile-rs` | `video.tile_rs` | Reed-Solomon паритет % 0..200 (только `tile`) |
 
 ---
 
-## Соответствие параметрам olcrtc
+## Соответствие YAML полям olcrtc
 
-| URI поле | Параметр / значение |
-|----------|---------------------|
-| `<Carrier>` | `-carrier` |
-| `<Transport>` | `-transport` |
-| payload | соответствующие флаги транспорта |
-| `<RoomID>` | `-id` |
-| `<EncryptionKey>` | `-key` |
-| `<ClientID>` | `-client-id` |
+| URI поле | YAML поле |
+|----------|-----------|
+| `<Auth>` | `auth.provider` |
+| `<Transport>` | `net.transport` |
+| payload | соответствующие YAML поля транспорта |
+| `<RoomID>` | `room.id` |
+| `<EncryptionKey>` | `crypto.key` |
 | `<MIMO>` | В `olcrtc` не передаётся. Это только клиентский комментарий |
 
-`-link direct` и `-data data` в этом формате не кодируются, потому что для текущих сценариев они фиксированные.
+`link: direct` и `data: data` в этом формате не кодируются, потому что для текущих сценариев они фиксированные.
 
 ---
 
@@ -107,7 +105,6 @@ Payload не используется.
 | `<...>` | payload параметров транспорта |
 | `@` | `<RoomID>` |
 | `#` | `<EncryptionKey>` |
-| `%` | `<ClientID>` |
 | `$` | `<MIMO>` |
 
 Рекомендуется не использовать эти символы внутри самих полей. Если клиенту это нужно, он должен ввести собственное escaping/percent-encoding правило и применять его симметрично при кодировании и декодировании.
@@ -116,85 +113,135 @@ Payload не используется.
 
 ## Примеры
 
-### wbstream + datachannel (рекомендуется)
+### wbstream + datachannel (не работает в обычном guest flow)
 
 ```text
-olcrtc://wbstream?datachannel@room-01#d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799%android-01$RU / olc free sub / IPv6
+olcrtc://wbstream?datachannel@room-01#d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799$RU / olc free sub / IPv6
 ```
 
-Payload не нужен - datachannel параметров не имеет.
+Payload не нужен - datachannel параметров не имеет. Для WBStream этот режим **не работает** в обычном guest flow: WB Stream выдаёт токены с `canPublishData=false`, и DC не маршрутизирует данные.
 
-### Эквивалент CLI
+### Эквивалент YAML
 
-```sh
-./olcrtc -mode cnc \
-  -carrier wbstream \
-  -transport datachannel \
-  -id room-01 \
-  -client-id android-01 \
-  -key d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799 \
-  -link direct \
-  -data data
+```yaml
+mode: cnc
+link: direct
+auth:
+  provider: wbstream
+room:
+  id: "room-01"
+crypto:
+  key: "d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799"
+net:
+  transport: datachannel
+data: data
 ```
 
 ### wbstream + vp8channel
 
 ```text
-olcrtc://wbstream?vp8channel<vp8-fps=60&vp8-batch=64>@room-01#d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799%android-01$RU / olc free sub / IPv6
+olcrtc://wbstream?vp8channel<vp8-fps=60&vp8-batch=64>@room-01#d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799$RU / olc free sub / IPv6
 ```
 
-### Эквивалент CLI
+### Эквивалент YAML
 
-```sh
-./olcrtc -mode cnc \
-  -carrier wbstream \
-  -transport vp8channel \
-  -id room-01 \
-  -client-id android-01 \
-  -key d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799 \
-  -link direct \
-  -data data \
-  -vp8-fps 60 -vp8-batch 64
+```yaml
+mode: cnc
+link: direct
+auth:
+  provider: wbstream
+room:
+  id: "room-01"
+crypto:
+  key: "d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799"
+net:
+  transport: vp8channel
+vp8:
+  fps: 60
+  batch_size: 64
+data: data
 ```
 
 ### jazz + seichannel
 
 ```text
-olcrtc://jazz?seichannel<fps=60&batch=64&frag=900&ack-ms=2000>@room-01#d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799%android-01$DE / olc free sub
+olcrtc://jazz?seichannel<fps=60&batch=64&frag=900&ack-ms=2000>@room-01#d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799$DE / olc free sub
 ```
 
-### Эквивалент CLI
+### Эквивалент YAML
 
-```sh
-./olcrtc -mode cnc \
-  -carrier jazz \
-  -transport seichannel \
-  -id room-01 \
-  -client-id android-01 \
-  -key d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799 \
-  -link direct \
-  -data data \
-  -fps 60 -batch 64 -frag 900 -ack-ms 2000
+```yaml
+mode: cnc
+link: direct
+auth:
+  provider: jazz
+room:
+  id: "room-01"
+crypto:
+  key: "d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799"
+net:
+  transport: seichannel
+sei:
+  fps: 60
+  batch_size: 64
+  fragment_size: 900
+  ack_timeout_ms: 2000
+data: data
 ```
 
 ### telemost + videochannel
 
 ```text
-olcrtc://telemost?videochannel<video-w=1080&video-h=1080&video-fps=60&video-bitrate=5000k&video-hw=none&video-codec=qrcode>@room-01#d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799%android-01$MIMO
+olcrtc://telemost?videochannel<video-w=1080&video-h=1080&video-fps=60&video-bitrate=5000k&video-hw=none&video-codec=qrcode>@room-01#d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799$MIMO
 ```
 
-### Эквивалент CLI
+### Эквивалент YAML
 
-```sh
-./olcrtc -mode cnc \
-  -carrier telemost \
-  -transport videochannel \
-  -id room-01 \
-  -client-id android-01 \
-  -key d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799 \
-  -link direct \
-  -data data \
-  -video-w 1080 -video-h 1080 -video-fps 60 -video-bitrate 5000k -video-hw none -video-codec qrcode
+```yaml
+mode: cnc
+link: direct
+auth:
+  provider: telemost
+room:
+  id: "room-01"
+crypto:
+  key: "d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799"
+net:
+  transport: videochannel
+video:
+  width: 1080
+  height: 1080
+  fps: 60
+  bitrate: "5000k"
+  hw: none
+  codec: qrcode
+data: data
+```
+
+---
+
+### jitsi + datachannel
+
+```text
+olcrtc://jitsi?datachannel@https://meet.cryptopro.ru/myroom#d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799$RU / olc free sub
+```
+
+`<RoomID>` для jitsi — полный URL комнаты в формате `https://host/room` (или `host/room`). Поддерживается любой self-hosted Jitsi Meet инстанс без аутентификации; для публичных серверов вроде `meet.jit.si` тот же формат.
+
+### Эквивалент YAML
+
+```yaml
+mode: cnc
+link: direct
+auth:
+  provider: jitsi
+room:
+  id: "https://meet.cryptopro.ru/myroom"
+crypto:
+  key: "d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799"
+net:
+  transport: datachannel
+data: data
 ```
 
 ---
@@ -207,4 +254,4 @@ olcrtc://telemost?videochannel<video-w=1080&video-h=1080&video-fps=60&video-bitr
 
 Формат подписки (список серверов): [sub.md](sub.md)
 
-Матрица совместимости carrier + transport: [settings.md](settings.md)
+Матрица совместимости auth + transport: [settings.md](settings.md)

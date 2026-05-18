@@ -15,8 +15,11 @@ import (
 
 	"github.com/openlibrecommunity/olcrtc/internal/app/session"
 	"github.com/openlibrecommunity/olcrtc/internal/client"
+	"github.com/openlibrecommunity/olcrtc/internal/control"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	"github.com/openlibrecommunity/olcrtc/internal/protect"
+
+	"github.com/openlibrecommunity/olcrtc/internal/transport/vp8channel"
 
 	_ "golang.org/x/mobile/bind"                       // ensure gomobile bind is available
 	_ "google.golang.org/genproto/protobuf/field_mask" // keep gomobile on post-split genproto modules
@@ -47,7 +50,6 @@ var (
 )
 
 const (
-	defaultLink        = "direct"
 	defaultTransport   = "vp8channel"
 	dataTransport      = "datachannel"
 	defaultDNSServer   = "1.1.1.1:53"
@@ -65,23 +67,25 @@ const (
 )
 
 var (
-	mu                 sync.Mutex //nolint:gochecknoglobals // package-level state intentional
-	defaults           mobileConfig //nolint:gochecknoglobals // package-level state intentional
-	defaultsSet        sync.Once //nolint:gochecknoglobals // package-level state intentional
-	registerSet        sync.Once //nolint:gochecknoglobals // package-level state intentional
+	mu                 sync.Mutex            //nolint:gochecknoglobals // package-level state intentional
+	defaults           mobileConfig          //nolint:gochecknoglobals // package-level state intentional
+	defaultsSet        sync.Once             //nolint:gochecknoglobals // package-level state intentional
+	registerSet        sync.Once             //nolint:gochecknoglobals // package-level state intentional
 	runClientWithReady = client.RunWithReady //nolint:gochecknoglobals // package-level state intentional
-	cancel             context.CancelFunc //nolint:gochecknoglobals // package-level state intentional
-	done               chan struct{} //nolint:gochecknoglobals // package-level state intentional
-	ready              chan struct{} //nolint:gochecknoglobals // package-level state intentional
+	cancel             context.CancelFunc    //nolint:gochecknoglobals // package-level state intentional
+	done               chan struct{}         //nolint:gochecknoglobals // package-level state intentional
+	ready              chan struct{}         //nolint:gochecknoglobals // package-level state intentional
 	errRun             error
 )
 
 type mobileConfig struct {
-	link         string
-	transport    string
-	dnsServer    string
-	vp8FPS       int
-	vp8BatchSize int
+	transport        string
+	dnsServer        string
+	vp8FPS           int
+	vp8BatchSize     int
+	livenessInterval time.Duration
+	livenessTimeout  time.Duration
+	livenessFailures int
 }
 
 // SetProtector sets the Android VPN socket protector.
@@ -117,15 +121,6 @@ func SetTransport(transport string) {
 	defaults.transport = normalizeTransport(transport)
 }
 
-// SetLink selects the link used by Start.
-// Supported value today: direct.
-func SetLink(link string) {
-	mu.Lock()
-	defer mu.Unlock()
-	ensureDefaultConfigLocked()
-	defaults.link = link
-}
-
 // SetDNS selects the DNS server used by the tunnel.
 func SetDNS(dnsServer string) {
 	mu.Lock()
@@ -141,6 +136,21 @@ func SetVP8Options(fps, batchSize int) {
 	ensureDefaultConfigLocked()
 	defaults.vp8FPS = clampAtLeastOne(fps, 120)
 	defaults.vp8BatchSize = clampAtLeastOne(batchSize, 64)
+}
+
+// SetLivenessOptions configures control-stream ping/pong checks.
+// Values <= 0 reset that field to its default. Durations are milliseconds.
+func SetLivenessOptions(intervalMillis, timeoutMillis, failures int) {
+	mu.Lock()
+	defer mu.Unlock()
+	ensureDefaultConfigLocked()
+	defaults.livenessInterval = durationFromMillisOrDefault(intervalMillis, control.DefaultInterval)
+	defaults.livenessTimeout = durationFromMillisOrDefault(timeoutMillis, control.DefaultTimeout)
+	if failures <= 0 {
+		defaults.livenessFailures = control.DefaultFailures
+		return
+	}
+	defaults.livenessFailures = failures
 }
 
 // SetDebug enables or disables verbose logging.
@@ -195,6 +205,11 @@ func Check(
 	vp8BatchSize int,
 ) (int64, error) {
 	registerDefaults()
+	mu.Lock()
+	ensureDefaultConfigLocked()
+	cfg := defaults
+	mu.Unlock()
+
 	carrierName = normalizeCarrier(carrierName)
 	transportName = normalizeTransport(transportName)
 	if err := validateStartArgs(carrierName, roomID, clientID, keyHex); err != nil {
@@ -216,37 +231,25 @@ func Check(
 	go func() {
 		doneCh <- runClientWithReady(
 			ctx,
-			defaultLink,
-			transportName,
-			carrierName,
-			buildRoomURL(carrierName, roomID),
-			keyHex,
-			clientID,
-			fmt.Sprintf("127.0.0.1:%d", socksPort),
-			defaultDNSServer,
-			"",
-			"",
+			client.Config{
+				Transport: transportName,
+				Carrier:   carrierName,
+				RoomURL:   buildRoomURL(carrierName, roomID),
+				KeyHex:    keyHex,
+				DeviceID:  clientID,
+				LocalAddr: fmt.Sprintf("127.0.0.1:%d", socksPort),
+				DNSServer: defaultDNSServer,
+				TransportOptions: vp8channel.Options{
+					FPS:       clampAtLeastOne(vp8FPS, 120),
+					BatchSize: clampAtLeastOne(vp8BatchSize, 64),
+				},
+				Liveness: livenessConfig(cfg),
+			},
 			func() {
 				readyOnce.Do(func() {
 					close(readyCh)
 				})
 			},
-			0,
-			0,
-			0,
-			"",
-			"",
-			0,
-			"",
-			"",
-			0,
-			0,
-			clampAtLeastOne(vp8FPS, 120),
-			clampAtLeastOne(vp8BatchSize, 64),
-			0,
-			0,
-			0,
-			0,
 		)
 	}()
 
@@ -285,6 +288,11 @@ func Ping(
 	vp8BatchSize int,
 ) (int64, error) {
 	registerDefaults()
+	mu.Lock()
+	ensureDefaultConfigLocked()
+	cfg := defaults
+	mu.Unlock()
+
 	carrierName = normalizeCarrier(carrierName)
 	transportName = normalizeTransport(transportName)
 
@@ -313,37 +321,25 @@ func Ping(
 	go func() {
 		doneCh <- runClientWithReady(
 			ctx,
-			defaultLink,
-			transportName,
-			carrierName,
-			buildRoomURL(carrierName, roomID),
-			keyHex,
-			clientID,
-			fmt.Sprintf("127.0.0.1:%d", socksPort),
-			defaultDNSServer,
-			"",
-			"",
+			client.Config{
+				Transport: transportName,
+				Carrier:   carrierName,
+				RoomURL:   buildRoomURL(carrierName, roomID),
+				KeyHex:    keyHex,
+				DeviceID:  clientID,
+				LocalAddr: fmt.Sprintf("127.0.0.1:%d", socksPort),
+				DNSServer: defaultDNSServer,
+				TransportOptions: vp8channel.Options{
+					FPS:       clampAtLeastOne(vp8FPS, 120),
+					BatchSize: clampAtLeastOne(vp8BatchSize, 64),
+				},
+				Liveness: livenessConfig(cfg),
+			},
 			func() {
 				readyOnce.Do(func() {
 					close(readyCh)
 				})
 			},
-			0,
-			0,
-			0,
-			"",
-			"",
-			0,
-			"",
-			"",
-			0,
-			0,
-			clampAtLeastOne(vp8FPS, 120),
-			clampAtLeastOne(vp8BatchSize, 64),
-			0,
-			0,
-			0,
-			0,
 		)
 	}()
 
@@ -572,37 +568,27 @@ func startWithConfig(
 
 		err := runClientWithReady(
 			ctx,
-			cfg.link,
-			cfg.transport,
-			carrierName,
-			roomURL,
-			keyHex,
-			clientID,
-			fmt.Sprintf("127.0.0.1:%d", socksPort),
-			cfg.dnsServer,
-			socksUser,
-			socksPass,
+			client.Config{
+				Transport: cfg.transport,
+				Carrier:   carrierName,
+				RoomURL:   roomURL,
+				KeyHex:    keyHex,
+				DeviceID:  clientID,
+				LocalAddr: fmt.Sprintf("127.0.0.1:%d", socksPort),
+				DNSServer: cfg.dnsServer,
+				SOCKSUser: socksUser,
+				SOCKSPass: socksPass,
+				TransportOptions: vp8channel.Options{
+					FPS:       cfg.vp8FPS,
+					BatchSize: cfg.vp8BatchSize,
+				},
+				Liveness: livenessConfig(cfg),
+			},
 			func() {
 				readyOnce.Do(func() {
 					close(localReady)
 				})
 			},
-			0,
-			0,
-			0,
-			"",
-			"",
-			0,
-			"",
-			"",
-			0,
-			0,
-			cfg.vp8FPS,
-			cfg.vp8BatchSize,
-			0,
-			0,
-			0,
-			0,
 		)
 
 		mu.Lock()
@@ -616,6 +602,7 @@ func startWithConfig(
 }
 
 // WaitReady blocks until the selected transport is connected and the local SOCKS5 listener is ready.
+//
 //nolint:cyclop // straightforward state-machine waits with multiple terminal conditions
 func WaitReady(timeoutMillis int) error {
 	mu.Lock()
@@ -706,13 +693,35 @@ func waitForCheckDone(doneCh <-chan error) {
 func ensureDefaultConfigLocked() {
 	defaultsSet.Do(func() {
 		defaults = mobileConfig{
-			link:         defaultLink,
-			transport:    defaultTransport,
-			dnsServer:    defaultDNSServer,
-			vp8FPS:       60,
-			vp8BatchSize: 8,
+			transport:        defaultTransport,
+			dnsServer:        defaultDNSServer,
+			vp8FPS:           60,
+			vp8BatchSize:     8,
+			livenessInterval: control.DefaultInterval,
+			livenessTimeout:  control.DefaultTimeout,
+			livenessFailures: control.DefaultFailures,
 		}
 	})
+}
+
+func livenessConfig(cfg mobileConfig) control.Config {
+	interval := cfg.livenessInterval
+	if interval <= 0 {
+		interval = control.DefaultInterval
+	}
+	timeout := cfg.livenessTimeout
+	if timeout <= 0 {
+		timeout = control.DefaultTimeout
+	}
+	failures := cfg.livenessFailures
+	if failures <= 0 {
+		failures = control.DefaultFailures
+	}
+	return control.Config{
+		Interval: interval,
+		Timeout:  timeout,
+		Failures: failures,
+	}
 }
 
 func normalizeTransport(value string) string {
@@ -772,6 +781,17 @@ func clampAtLeastOne(value, maxValue int) int {
 		return maxValue
 	}
 	return value
+}
+
+func durationFromMillisOrDefault(value int, def time.Duration) time.Duration {
+	if value <= 0 {
+		return def
+	}
+	d := time.Duration(value) * time.Millisecond
+	if d <= 0 {
+		return def
+	}
+	return d
 }
 
 // logBridge adapts LogWriter to io.Writer.

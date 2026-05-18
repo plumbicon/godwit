@@ -1,11 +1,3 @@
-# НЕ НОЙТЕ ЧТО ВБ НЕ РАБОТАЕТ! ОНИ ОТКЛЮЧИЛИ АВТО СОЗДАНИЕ РУМ И ПОДКЛЮЧЕНИЕ ГОСТЕЙ К ЗВОНКАМ, СПАМЬТЕ ИМ НА ПОЧТУ ПОДДЕРЖКИ ЧТОБЫ ВЕРНУЛИ,  ЕСЛИ В ТЕЧЕНИИ 3 ДНЕЙ ОНИ НЕ ВЕРНУТ ГОСТЕЙ ТО ПОДДЕРЖКА WMS БУДЕТ ВЫПЕЛЕНА
-
-# !!!ВСЕМ РАЗРАБАМ OLCRTC КЛЕНТОВ И ПАНЕЛЕЙ!!!
-
-## через +- неделю будем смержена ветка с серьезными изменениями ломающими всю совместимость, посмотреть изменения можно здесь (https://github.com/openlibrecommunity/olcrtc/tree/refactor/universal-carrier) , советую пеерчитать доку / кинуть ее в ии и на основе этого обновить панели,  тоесть создать ветку с поддержкой новой версии, проверить что все работает, и ждать как ветка refactor/universal-carrier станет master. получается у вас есть неделя чтобы обновить клиенты
-
-
-
 <div align="center">
 
 <img src="https://github.com/openlibrecommunity/material/blob/master/olcrtc.png" width="250" height="250">
@@ -31,9 +23,11 @@ Issues? contact us at [@openlibrecommunity](https://t.me/openlibrecommunity)
 <br>
 Or wait for the release or at least a release
 <br>
-Community android client: [alananisimov/olcbox](https://github.com/alananisimov/olcbox)
+Community ui client: [alananisimov/olcbox](https://github.com/alananisimov/olcbox)
 
 ## Read docs for start 
+
+[Configuration](docs/configuration.md)
 
 [For noobs](docs/fast.md)
 

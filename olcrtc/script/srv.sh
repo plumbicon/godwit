@@ -6,7 +6,7 @@ set -e
 
 PODMAN_ID=$(tr -dc 'a-z0-9' </dev/urandom | head -c 8)
 CONTAINER_NAME="olcrtc-server-$PODMAN_ID"
-IMAGE_NAME="docker.io/library/golang:1.26-alpine"
+IMAGE_NAME="docker.io/library/golang:1.25-alpine3.22"
 REPO_URL="https://github.com/openlibrecommunity/olcrtc.git"
 WORK_DIR="/tmp/olcrtc-deploy-$PODMAN_ID"
 BRANCH="master"
@@ -38,8 +38,13 @@ if ! command -v podman &> /dev/null; then
 
     if [ "$(id -u)" -eq 0 ]; then
         SUDO=""
-    else
+    elif command -v sudo &> /dev/null; then
         SUDO="sudo"
+    elif command -v doas &> /dev/null; then
+        SUDO="doas"
+    else
+        echo "[X] No sudo/doas found and not running as root. Cannot install podman."
+        exit 1
     fi
 
     if command -v apt &> /dev/null; then
@@ -63,21 +68,35 @@ fi
 
 echo "[+] Using Podman"
 echo ""
+
+validate_key() {
+    case "$1" in
+        *[!0-9a-fA-F]*)
+            return 1
+            ;;
+    esac
+    [ "${#1}" -eq 64 ]
+}
+
 echo "Select carrier:"
-echo "  1) telemost"
-echo "  2) jazz"
-echo "  3) wbstream"
-read -p "Enter choice [1-3, default: 3]: " CARRIER_CHOICE
+echo "  1) jitsi"
+echo "  2) telemost"
+echo "  3) jazz"
+echo "  4) wbstream"
+read -p "Enter choice [1-4, default: 1]: " CARRIER_CHOICE
 
 case "$CARRIER_CHOICE" in
-    1)
+    2)
         CARRIER="telemost"
         ;;
-    2)
+    3)
         CARRIER="jazz"
         ;;
-    *)
+    4)
         CARRIER="wbstream"
+        ;;
+    *)
+        CARRIER="jitsi"
         ;;
 esac
 
@@ -131,17 +150,46 @@ if [ "$CARRIER" = "jazz" ]; then
             echo "[*] Will generate room before starting server"
             ;;
     esac
+elif [ "$CARRIER" = "jitsi" ]; then
+    read -p "Jitsi base URL [default: https://meet.cryptopro.ru/]: " JITSI_BASE_INPUT
+    JITSI_BASE_URL=${JITSI_BASE_INPUT:-https://meet.cryptopro.ru/}
+    JITSI_BASE_URL="${JITSI_BASE_URL%/}"
+
+    echo "Room options:"
+    echo "  1) Auto-generate new room (recommended)"
+    echo "  2) Use specific room name or URL"
+    read -p "Enter choice [1-2, default: 1]: " ROOM_CHOICE
+
+    case "$ROOM_CHOICE" in
+        2)
+            read -p "Enter Jitsi room name or URL: " JITSI_ROOM_INPUT
+            if [ -z "$JITSI_ROOM_INPUT" ]; then
+                echo "[X] Jitsi room name/URL cannot be empty"
+                exit 1
+            fi
+
+            case "$JITSI_ROOM_INPUT" in
+                http://*|https://*|*/*)
+                    ROOM_ID="$JITSI_ROOM_INPUT"
+                    ;;
+                *)
+                    ROOM_ID="$JITSI_BASE_URL/$JITSI_ROOM_INPUT"
+                    ;;
+            esac
+            ;;
+        *)
+            JITSI_ROOM="olcrtc-$PODMAN_ID"
+            ROOM_ID="$JITSI_BASE_URL/$JITSI_ROOM"
+            echo "[*] Generated Jitsi room URL: $ROOM_ID"
+            ;;
+    esac
 else
     read -p "Enter Room ID: " ROOM_ID
     if [ -z "$ROOM_ID" ]; then
-        echo "[X] Room ID cannot be empty"
+        echo "[X] Room ID/URL cannot be empty"
         exit 1
     fi
 fi
-
-echo ""
-read -p "Enter Client ID [default: default]: " CLIENT_ID_INPUT
-CLIENT_ID=${CLIENT_ID_INPUT:-default}
 
 echo ""
 read -p "DNS server [default: 8.8.8.8:53]: " DNS_INPUT
@@ -150,7 +198,8 @@ DNS=${DNS_INPUT:-8.8.8.8:53}
 echo ""
 read -p "Use SOCKS5 proxy for egress? (y/N): " USE_PROXY
 
-EXTRA_ARGS=()
+SOCKS_PROXY_ADDR=""
+SOCKS_PROXY_PORT=0
 
 if [[ "$USE_PROXY" =~ ^[Yy]$ ]]; then
     read -p "Enter SOCKS5 proxy address [default: 127.0.0.1]: " PROXY_ADDR_INPUT
@@ -160,10 +209,14 @@ if [[ "$USE_PROXY" =~ ^[Yy]$ ]]; then
     SOCKS_PROXY_PORT=${PROXY_PORT_INPUT:-1080}
 
     echo "[*] Will use SOCKS5 proxy: $SOCKS_PROXY_ADDR:$SOCKS_PROXY_PORT"
-    EXTRA_ARGS+=(-socks-proxy "$SOCKS_PROXY_ADDR" -socks-proxy-port "$SOCKS_PROXY_PORT")
 fi
 
-TRANSPORT_ARGS=()
+# Transport-specific settings
+VIDEO_W=1920; VIDEO_H=1080; VIDEO_FPS=30; VIDEO_BITRATE="2M"; VIDEO_HW="none"
+VIDEO_CODEC="qrcode"; VIDEO_QR_SIZE=0; VIDEO_QR_RECOVERY="low"
+VIDEO_TILE_MODULE=4; VIDEO_TILE_RS=20
+VP8_FPS=25; VP8_BATCH=1
+SEI_FPS=60; SEI_BATCH=64; SEI_FRAG=900; SEI_ACK=2000
 
 if [ "$TRANSPORT" = "videochannel" ]; then
     echo ""
@@ -187,8 +240,6 @@ if [ "$TRANSPORT" = "videochannel" ]; then
 
             read -p "Tile Reed-Solomon parity percent 0..200 [default: 20]: " VTILE_RS_INPUT
             VIDEO_TILE_RS=${VTILE_RS_INPUT:-20}
-
-            TRANSPORT_ARGS+=(-video-tile-module "$VIDEO_TILE_MODULE" -video-tile-rs "$VIDEO_TILE_RS")
             ;;
         *)
             VIDEO_CODEC="qrcode"
@@ -204,11 +255,6 @@ if [ "$TRANSPORT" = "videochannel" ]; then
 
             read -p "QR fragment size bytes [default: 0 (auto)]: " VQRSZ_INPUT
             VIDEO_QR_SIZE=${VQRSZ_INPUT:-0}
-
-            if [ "$VIDEO_QR_SIZE" -gt 0 ]; then
-                TRANSPORT_ARGS+=(-video-qr-size "$VIDEO_QR_SIZE")
-            fi
-            TRANSPORT_ARGS+=(-video-qr-recovery "$VIDEO_QR_RECOVERY")
             ;;
     esac
 
@@ -220,9 +266,6 @@ if [ "$TRANSPORT" = "videochannel" ]; then
 
     read -p "Hardware acceleration (none/nvenc) [default: none]: " VHW_INPUT
     VIDEO_HW=${VHW_INPUT:-none}
-
-    TRANSPORT_ARGS+=(-video-w "$VIDEO_W" -video-h "$VIDEO_H" -video-fps "$VIDEO_FPS" \
-        -video-bitrate "$VIDEO_BITRATE" -video-hw "$VIDEO_HW" -video-codec "$VIDEO_CODEC")
 fi
 
 if [ "$TRANSPORT" = "vp8channel" ]; then
@@ -234,33 +277,29 @@ if [ "$TRANSPORT" = "vp8channel" ]; then
 
     read -p "VP8 batch size (frames per tick) [default: 1]: " VP8BATCH_INPUT
     VP8_BATCH=${VP8BATCH_INPUT:-1}
-
-    TRANSPORT_ARGS+=(-vp8-fps "$VP8_FPS" -vp8-batch "$VP8_BATCH")
 fi
 
 if [ "$TRANSPORT" = "seichannel" ]; then
     echo ""
     echo "--- SEIchannel settings ---"
 
-    read -p "SEI FPS [default: 20]: " SEIFPS_INPUT
-    SEI_FPS=${SEIFPS_INPUT:-20}
+    read -p "SEI FPS [default: 60]: " SEIFPS_INPUT
+    SEI_FPS=${SEIFPS_INPUT:-60}
 
-    read -p "SEI batch size (frames per tick) [default: 1]: " SEIBATCH_INPUT
-    SEI_BATCH=${SEIBATCH_INPUT:-1}
+    read -p "SEI batch size (frames per tick) [default: 64]: " SEIBATCH_INPUT
+    SEI_BATCH=${SEIBATCH_INPUT:-64}
 
     read -p "SEI fragment size in bytes [default: 900]: " SEIFRAG_INPUT
     SEI_FRAG=${SEIFRAG_INPUT:-900}
 
-    read -p "SEI ACK timeout in milliseconds [default: 3000]: " SEIACK_INPUT
-    SEI_ACK=${SEIACK_INPUT:-3000}
-
-    TRANSPORT_ARGS+=(-fps "$SEI_FPS" -batch "$SEI_BATCH" -frag "$SEI_FRAG" -ack-ms "$SEI_ACK")
+    read -p "SEI ACK timeout in milliseconds [default: 2000]: " SEIACK_INPUT
+    SEI_ACK=${SEIACK_INPUT:-2000}
 fi
 
 echo ""
 echo "[*] Cleaning workspace..."
-rm -rf $WORK_DIR
-mkdir -p $WORK_DIR
+rm -rf "$WORK_DIR"
+mkdir -p "$WORK_DIR"
 
 CACHE_DIR="${OLCRTC_CACHE_DIR:-$HOME/.cache/olcrtc}"
 GOMOD_CACHE="$CACHE_DIR/gomod"
@@ -282,20 +321,20 @@ mkdir -p "$GOMOD_CACHE" "$GO_BUILD_CACHE"
 echo "[*] Using Go cache: $CACHE_DIR"
 
 echo "[*] Cloning repository..."
-git clone --depth 1 --recurse-submodules --branch "$BRANCH" $REPO_URL $WORK_DIR
+git clone --depth 1 --recurse-submodules --branch "$BRANCH" "$REPO_URL" "$WORK_DIR"
 
 echo "[*] Pulling Go image..."
-podman pull $IMAGE_NAME
+podman pull "$IMAGE_NAME"
 
 echo "[*] Building OlcRTC..."
 podman run --rm \
     --network host \
-    -v $WORK_DIR:/app:Z \
-    -v $GOMOD_CACHE:/go/pkg/mod:Z \
-    -v $GO_BUILD_CACHE:/root/.cache/go-build:Z \
+    -v "$WORK_DIR":/app:Z \
+    -v "$GOMOD_CACHE":/go/pkg/mod:Z \
+    -v "$GO_BUILD_CACHE":/root/.cache/go-build:Z \
     -w /app \
-    $IMAGE_NAME \
-    sh -c "go mod tidy && go build -o olcrtc cmd/olcrtc/main.go"
+    "$IMAGE_NAME" \
+    sh -c "go mod download && go build -trimpath -ldflags='-s -w' -o olcrtc ./cmd/olcrtc"
 
 if [ ! -f "$WORK_DIR/olcrtc" ]; then
     echo "[X] Build failed"
@@ -303,13 +342,24 @@ if [ ! -f "$WORK_DIR/olcrtc" ]; then
 fi
 
 if [ "$GEN_ROOM" = "1" ]; then
-    echo "[*] Generating room via -mode gen..."
+    echo "[*] Generating room via mode: gen..."
+    GEN_CONFIG="$WORK_DIR/gen.yaml"
+    cat > "$GEN_CONFIG" <<GENEOF
+mode: gen
+auth:
+  provider: "$CARRIER"
+net:
+  dns: "$DNS"
+gen:
+  amount: 1
+data: data
+GENEOF
     ROOM_ID=$(podman run --rm \
         --network host \
-        -v $WORK_DIR:/app:Z \
+        -v "$WORK_DIR":/app:Z \
         -w /app \
-        $IMAGE_NAME \
-        ./olcrtc -mode gen -carrier "$CARRIER" -dns "$DNS" -amount 1 -data data)
+        "$IMAGE_NAME" \
+        ./olcrtc gen.yaml)
     if [ -z "$ROOM_ID" ]; then
         echo "[X] Room generation failed"
         exit 1
@@ -321,7 +371,12 @@ KEY_FILE="$HOME/.olcrtc_key"
 
 if [ -f "$KEY_FILE" ]; then
     echo "[*] Loading existing encryption key..."
-    KEY=$(cat "$KEY_FILE")
+    KEY=$(tr -d '[:space:]' < "$KEY_FILE")
+    if ! validate_key "$KEY"; then
+        echo "[X] Invalid encryption key in $KEY_FILE"
+        echo "    Remove the file to generate a new key, or replace it with 64 hex characters."
+        exit 1
+    fi
 else
     echo "[*] Generating new encryption key..."
     KEY=$(openssl rand -hex 32)
@@ -335,17 +390,81 @@ else
     echo ""
 fi
 
+# Generate YAML config
+CONFIG_FILE="$WORK_DIR/server.yaml"
+cat > "$CONFIG_FILE" <<EOF
+mode: srv
+auth:
+  provider: "$CARRIER"
+room:
+  id: "$ROOM_ID"
+crypto:
+  key: "$KEY"
+net:
+  transport: "$TRANSPORT"
+  dns: "$DNS"
+EOF
+
+if [ -n "$SOCKS_PROXY_ADDR" ]; then
+    cat >> "$CONFIG_FILE" <<EOF
+socks:
+  proxy_addr: "$SOCKS_PROXY_ADDR"
+  proxy_port: $SOCKS_PROXY_PORT
+EOF
+fi
+
+if [ "$TRANSPORT" = "vp8channel" ]; then
+    cat >> "$CONFIG_FILE" <<EOF
+vp8:
+  fps: $VP8_FPS
+  batch_size: $VP8_BATCH
+EOF
+fi
+
+if [ "$TRANSPORT" = "seichannel" ]; then
+    cat >> "$CONFIG_FILE" <<EOF
+sei:
+  fps: $SEI_FPS
+  batch_size: $SEI_BATCH
+  fragment_size: $SEI_FRAG
+  ack_timeout_ms: $SEI_ACK
+EOF
+fi
+
+if [ "$TRANSPORT" = "videochannel" ]; then
+    cat >> "$CONFIG_FILE" <<EOF
+video:
+  width: $VIDEO_W
+  height: $VIDEO_H
+  fps: $VIDEO_FPS
+  bitrate: "$VIDEO_BITRATE"
+  hw: $VIDEO_HW
+  codec: $VIDEO_CODEC
+  qr_size: $VIDEO_QR_SIZE
+  qr_recovery: $VIDEO_QR_RECOVERY
+  tile_module: $VIDEO_TILE_MODULE
+  tile_rs: $VIDEO_TILE_RS
+EOF
+fi
+
+cat >> "$CONFIG_FILE" <<EOF
+data: data
+debug: false
+EOF
+
 echo "[*] Starting OlcRTC server..."
+START_CMD="./olcrtc server.yaml"
+if [ "$TRANSPORT" = "videochannel" ]; then
+    START_CMD="apk add --no-cache ffmpeg >/dev/null && ./olcrtc server.yaml"
+fi
 podman run -d \
     --network host \
-    --name $CONTAINER_NAME \
+    --name "$CONTAINER_NAME" \
     --restart unless-stopped \
-    -v $WORK_DIR:/app:Z \
+    -v "$WORK_DIR":/app:Z \
     -w /app \
-    $IMAGE_NAME \
-    ./olcrtc -mode srv -carrier "$CARRIER" -id "$ROOM_ID" -client-id "$CLIENT_ID" -key "$KEY" \
-        -link direct -transport "$TRANSPORT" -dns "$DNS" -data data \
-        "${EXTRA_ARGS[@]}" "${TRANSPORT_ARGS[@]}"
+    "$IMAGE_NAME" \
+    sh -c "$START_CMD"
 
 read -p "Enter a comment for the config (default: olc - t.me/openlibrecommunity): " sub_configname
 if [ -z "$sub_configname" ]; then
@@ -358,8 +477,7 @@ echo ""
 echo "Container name: $CONTAINER_NAME"
 echo "Carrier:        $CARRIER"
 echo "Transport:      $TRANSPORT"
-echo "Room ID:        $ROOM_ID"
-echo "Client ID:      $CLIENT_ID"
+echo "Room ID/URL:    $ROOM_ID"
 echo "Encryption key: $KEY"
 echo ""
 TRANSPORT_PAYLOAD=""
@@ -378,7 +496,7 @@ elif [ "$TRANSPORT" = "videochannel" ]; then
     fi
 fi
 
-OLC_URI="olcrtc://$CARRIER?${TRANSPORT}${TRANSPORT_PAYLOAD}@$ROOM_ID#$KEY%$CLIENT_ID\$$sub_configname"
+OLC_URI="olcrtc://$CARRIER?${TRANSPORT}${TRANSPORT_PAYLOAD}@$ROOM_ID#$KEY\$$sub_configname"
 echo "uri: $OLC_URI"
 echo ""
 
@@ -401,7 +519,7 @@ else
     echo "[!] Could not download gr ($GR_URL), skipping QR"
 fi
 
-if [ ${#EXTRA_ARGS[@]} -gt 0 ]; then
+if [ -n "$SOCKS_PROXY_ADDR" ]; then
     echo "SOCKS5 proxy:   $SOCKS_PROXY_ADDR:$SOCKS_PROXY_PORT"
 fi
 
@@ -411,33 +529,4 @@ echo "  podman logs -f $CONTAINER_NAME"
 echo ""
 echo "Stop server:"
 echo "  podman stop $CONTAINER_NAME"
-echo ""
-echo "Client command:"
-echo -n "  ./olcrtc -mode cnc -carrier \"$CARRIER\" -id \"$ROOM_ID\" -client-id \"$CLIENT_ID\" -key \"$KEY\" \\"
-echo ""
-echo -n "    -link direct -transport \"$TRANSPORT\" -dns $DNS -data data \\"
-echo ""
-
-if [ "$TRANSPORT" = "videochannel" ]; then
-    echo -n "    -video-w \"$VIDEO_W\" -video-h \"$VIDEO_H\" -video-fps \"$VIDEO_FPS\" \\"
-    echo ""
-    echo -n "    -video-bitrate \"$VIDEO_BITRATE\" -video-hw \"$VIDEO_HW\" -video-codec \"$VIDEO_CODEC\" \\"
-    echo ""
-    if [ "$VIDEO_CODEC" = "tile" ]; then
-        echo -n "    -video-tile-module \"$VIDEO_TILE_MODULE\" -video-tile-rs \"$VIDEO_TILE_RS\" \\"
-        echo ""
-    fi
-fi
-
-if [ "$TRANSPORT" = "vp8channel" ]; then
-    echo -n "    -vp8-fps \"$VP8_FPS\" -vp8-batch \"$VP8_BATCH\" \\"
-    echo ""
-fi
-
-if [ "$TRANSPORT" = "seichannel" ]; then
-    echo -n "    -fps \"$SEI_FPS\" -batch \"$SEI_BATCH\" -frag \"$SEI_FRAG\" -ack-ms \"$SEI_ACK\" \\"
-    echo ""
-fi
-
-echo "    -socks-host 0.0.0.0 -socks-port 1080"
 echo ""

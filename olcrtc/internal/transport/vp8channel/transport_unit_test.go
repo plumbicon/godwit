@@ -8,21 +8,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openlibrecommunity/olcrtc/internal/carrier"
+	"github.com/openlibrecommunity/olcrtc/internal/engine"
+	enginebuiltin "github.com/openlibrecommunity/olcrtc/internal/engine/builtin"
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
 )
 
-var (
-	errVP8UnitBoom     = errors.New("boom")
-	errVP8UnitOpenBoom = errors.New("open boom")
-)
-
-type fakeVideoSession struct {
-	stream *fakeVideoStream
-	err    error
-}
+var errVP8UnitBoom = errors.New("boom")
 
 func TestSampleIntervalWithBatch(t *testing.T) {
 	tr := &streamTransport{
@@ -38,16 +31,6 @@ func TestSampleIntervalWithBatch(t *testing.T) {
 	if got := tr.sampleInterval(); got != tr.frameInterval {
 		t.Fatalf("sampleInterval(batch=1) = %v, want %v", got, tr.frameInterval)
 	}
-}
-
-func (s *fakeVideoSession) Capabilities() carrier.Capabilities {
-	return carrier.Capabilities{VideoTrack: true}
-}
-func (s *fakeVideoSession) OpenVideoTrack() (carrier.VideoTrack, error) {
-	if s.err != nil {
-		return nil, s.err
-	}
-	return s.stream, nil
 }
 
 type fakeVideoStream struct {
@@ -78,23 +61,55 @@ func (s *fakeVideoStream) SetTrackHandler(cb func(*webrtc.TrackRemote, *webrtc.R
 	s.trackCB = cb
 }
 
-type nonVideoSession struct{}
+// fakeEngineSession adapts fakeVideoStream so it satisfies engine.Session and
+// engine.VideoTrackCapable, the two interfaces the vp8channel transport
+// looks up after the carrier-layer collapse.
+type fakeEngineSession struct {
+	stream  *fakeVideoStream
+	noVideo bool
+}
 
-func (s *nonVideoSession) Capabilities() carrier.Capabilities { return carrier.Capabilities{} }
+func (s *fakeEngineSession) Capabilities() engine.Capabilities {
+	if s.noVideo {
+		return engine.Capabilities{}
+	}
+	return engine.Capabilities{VideoTrack: true}
+}
+func (s *fakeEngineSession) Connect(ctx context.Context) error { return s.stream.Connect(ctx) }
+func (s *fakeEngineSession) Send([]byte) error                 { return nil }
+func (s *fakeEngineSession) Close() error                      { return s.stream.Close() }
+func (s *fakeEngineSession) SetReconnectCallback(cb func(*webrtc.DataChannel)) {
+	s.stream.SetReconnectCallback(func() {
+		if cb != nil {
+			cb(nil)
+		}
+	})
+}
+func (s *fakeEngineSession) SetShouldReconnect(fn func() bool) { s.stream.SetShouldReconnect(fn) }
+func (s *fakeEngineSession) SetEndedCallback(cb func(string))  { s.stream.SetEndedCallback(cb) }
+func (s *fakeEngineSession) WatchConnection(ctx context.Context) {
+	s.stream.WatchConnection(ctx)
+}
+func (s *fakeEngineSession) CanSend() bool                            { return s.stream.CanSend() }
+func (s *fakeEngineSession) GetSendQueue() chan []byte                { return nil }
+func (s *fakeEngineSession) GetBufferedAmount() uint64                { return 0 }
+func (s *fakeEngineSession) AddVideoTrack(t webrtc.TrackLocal) error  { return s.stream.AddTrack(t) }
+func (s *fakeEngineSession) SetVideoTrackHandler(cb func(*webrtc.TrackRemote, *webrtc.RTPReceiver)) {
+	s.stream.SetTrackHandler(cb)
+}
 
 //nolint:cyclop // table-driven test naturally has many branches
 func TestNewConnectSendCallbacksFeaturesAndClose(t *testing.T) {
 	stream := &fakeVideoStream{canSend: true}
 	name := "vp8channel-unit-new"
-	carrier.Register(name, func(context.Context, carrier.Config) (carrier.Session, error) {
-		return &fakeVideoSession{stream: stream}, nil
+	enginebuiltin.Register(name, func(context.Context, enginebuiltin.Config) (engine.Session, error) {
+		return &fakeEngineSession{stream: stream}, nil
 	})
 
 	trIface, err := New(context.Background(), transport.Config{
-		Carrier:      name,
-		ClientID:     "client",
-		VP8FPS:       30,
-		VP8BatchSize: 1,
+		Carrier:  name,
+		DeviceID: "client",
+		Options:  Options{FPS: 30, BatchSize: 1},
 	})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
@@ -109,8 +124,8 @@ func TestNewConnectSendCallbacksFeaturesAndClose(t *testing.T) {
 	if err := tr.Connect(context.Background()); err != nil {
 		t.Fatalf("Connect() error = %v", err)
 	}
-	if tr.kcp != nil || !tr.writerUp.Load() {
-		t.Fatal("Connect() should not initialize kcp before peer arrives")
+	if tr.kcp == nil || !tr.writerUp.Load() {
+		t.Fatal("Connect() should eagerly initialize kcp and writer")
 	}
 	tr.SetReconnectCallback(func() {})
 	tr.SetShouldReconnect(func() bool { return true })
@@ -124,7 +139,8 @@ func TestNewConnectSendCallbacksFeaturesAndClose(t *testing.T) {
 	firstFrame := make([]byte, epochHdrLen+4)
 	copy(firstFrame, vp8Keepalive)
 	binary.BigEndian.PutUint32(firstFrame[tokenOff:epochOff], tr.bindingToken)
-	binary.BigEndian.PutUint32(firstFrame[epochOff:epochHdrLen], peerEpoch)
+	binary.BigEndian.PutUint32(firstFrame[epochOff:crcOff], peerEpoch)
+	binary.BigEndian.PutUint32(firstFrame[crcOff:epochHdrLen], epochCRC(tr.bindingToken, peerEpoch))
 	copy(firstFrame[epochHdrLen:], []byte("data"))
 	tr.handleIncomingFrame(firstFrame)
 	if tr.kcp == nil {
@@ -150,25 +166,20 @@ func TestNewConnectSendCallbacksFeaturesAndClose(t *testing.T) {
 }
 
 func TestNewErrorPaths(t *testing.T) {
-	carrier.Register("vp8channel-create-fails", func(context.Context, carrier.Config) (carrier.Session, error) {
+	enginebuiltin.Register("vp8channel-create-fails", func(context.Context, enginebuiltin.Config) (engine.Session, error) {
 		return nil, errVP8UnitBoom
 	})
-	if _, err := New(context.Background(), transport.Config{Carrier: "vp8channel-create-fails"}); err == nil || err.Error() != "create carrier transport: boom" { //nolint:lll // long test description
+	_, err := New(context.Background(), transport.Config{Carrier: "vp8channel-create-fails"})
+	if err == nil || err.Error() != "open engine session: boom" {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	carrier.Register("vp8channel-no-video", func(context.Context, carrier.Config) (carrier.Session, error) {
-		return &nonVideoSession{}, nil
+	enginebuiltin.Register("vp8channel-no-video", func(context.Context, enginebuiltin.Config) (engine.Session, error) {
+		return &fakeEngineSession{stream: &fakeVideoStream{}, noVideo: true}, nil
 	})
-	if _, err := New(context.Background(), transport.Config{Carrier: "vp8channel-no-video"}); !errors.Is(err, ErrVideoTrackUnsupported) { //nolint:lll // long test description
+	_, err = New(context.Background(), transport.Config{Carrier: "vp8channel-no-video"})
+	if !errors.Is(err, ErrVideoTrackUnsupported) {
 		t.Fatalf("New() error = %v, want %v", err, ErrVideoTrackUnsupported)
-	}
-
-	carrier.Register("vp8channel-open-fails", func(context.Context, carrier.Config) (carrier.Session, error) {
-		return &fakeVideoSession{err: errVP8UnitOpenBoom}, nil
-	})
-	if _, err := New(context.Background(), transport.Config{Carrier: "vp8channel-open-fails"}); err == nil || err.Error() != "open video track: open boom" { //nolint:lll // long test description
-		t.Fatalf("New() error = %v", err)
 	}
 }
 
@@ -186,7 +197,8 @@ func TestEpochHeaderTokenAndOutboundCapacity(t *testing.T) {
 	hdr := tr.epochHeader()
 	if !bytes.Equal(hdr[:tokenOff], vp8Keepalive) ||
 		binary.BigEndian.Uint32(hdr[tokenOff:epochOff]) != tr.bindingToken ||
-		binary.BigEndian.Uint32(hdr[epochOff:]) != tr.localEpoch {
+		binary.BigEndian.Uint32(hdr[epochOff:crcOff]) != tr.localEpoch ||
+		binary.BigEndian.Uint32(hdr[crcOff:epochHdrLen]) != epochCRC(tr.bindingToken, tr.localEpoch) {
 		t.Fatalf("epochHeader() = %x", hdr)
 	}
 	if bindingToken("") == 0 || randomEpoch() == 0 {
@@ -286,7 +298,8 @@ func TestHandleIncomingFrameEpochFilteringAndReconnect(t *testing.T) {
 		frame := make([]byte, epochHdrLen+len(payload))
 		copy(frame, vp8Keepalive)
 		binary.BigEndian.PutUint32(frame[tokenOff:epochOff], token)
-		binary.BigEndian.PutUint32(frame[epochOff:epochHdrLen], epoch)
+		binary.BigEndian.PutUint32(frame[epochOff:crcOff], epoch)
+		binary.BigEndian.PutUint32(frame[crcOff:epochHdrLen], epochCRC(token, epoch))
 		copy(frame[epochHdrLen:], payload)
 		return frame
 	}

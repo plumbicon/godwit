@@ -1,12 +1,17 @@
 // Package main provides the olcrtc CLI entrypoint.
+//
+// Usage: olcrtc <config.yaml>
+//
+// All runtime settings come from the YAML file. There are no other CLI flags.
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -16,15 +21,23 @@ import (
 	protoLogger "github.com/livekit/protocol/logger"
 	lksdk "github.com/livekit/server-sdk-go/v2"
 	"github.com/openlibrecommunity/olcrtc/internal/app/session"
+	configpkg "github.com/openlibrecommunity/olcrtc/internal/config"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	"github.com/openlibrecommunity/olcrtc/internal/names"
+	"github.com/openlibrecommunity/olcrtc/internal/supervisor"
 	"github.com/openlibrecommunity/olcrtc/internal/transport/videochannel"
 )
 
 const modeGen = "gen"
 
-// ErrDataDirRequired is returned when no data directory is specified.
-var ErrDataDirRequired = errors.New("data directory required (use -data data)")
+// ErrConfigPathRequired is returned when no config file is provided.
+var ErrConfigPathRequired = errors.New("usage: olcrtc <config.yaml>")
+
+// ErrDataDirRequired is returned when the YAML config does not specify a data directory.
+var ErrDataDirRequired = errors.New("data directory required (set 'data:' in YAML)")
+
+// ErrProfilesUnsupportedForGen is returned when failover profiles are configured for gen mode.
+var ErrProfilesUnsupportedForGen = errors.New("profiles are only supported for srv and cnc modes")
 
 //nolint:gochecknoglobals // Tests replace the long-running session runner with a bounded function.
 var runSession = session.Run
@@ -32,41 +45,19 @@ var runSession = session.Run
 //nolint:gochecknoglobals // Tests replace gen runner with a stub.
 var runGen = execGen
 
-type config struct {
-	mode            string
-	link            string
-	transport       string
-	carrier         string
-	roomID          string
-	clientID        string
-	socksPort       int
-	socksHost       string
-	socksUser       string
-	socksPass       string
-	keyHex          string
-	debug           bool
-	dataDir         string
-	dnsServer       string
-	socksProxyAddr  string
-	socksProxyPort  int
-	videoWidth      int
-	videoHeight     int
-	videoFPS        int
-	videoBitrate    string
-	videoHW         string
-	videoQRSize     int
-	videoQRRecovery string
-	videoCodec      string
-	videoTileModule int
-	videoTileRS     int
-	vp8FPS          int
-	vp8BatchSize    int
-	seiFPS          int
-	seiBatchSize    int
-	seiFragmentSize int
-	seiAckTimeoutMS int
-	amount          int
-	ffmpegPath      string
+// loadedConfig bundles the parsed YAML file and the derived session config.
+type loadedConfig struct {
+	scfg       session.Config
+	profiles   []supervisor.Profile
+	failover   failoverConfig
+	dataDir    string
+	debug      bool
+	ffmpegPath string
+}
+
+type failoverConfig struct {
+	retryDelay time.Duration
+	maxCycles  int
 }
 
 func main() {
@@ -81,43 +72,202 @@ func run() error {
 }
 
 func runWithArgs(args []string) error {
+	logger.DisableNoisyPionLogs()
+	installStderrFilter()
 	session.RegisterDefaults()
 
-	cfg, err := parseFlagsFrom(args, flag.ExitOnError)
+	if len(args) != 1 || args[0] == "-h" || args[0] == "--help" || args[0] == "-help" {
+		return ErrConfigPathRequired
+	}
+
+	cfg, err := loadConfig(args[0])
 	if err != nil {
 		return err
 	}
 	return runWithConfig(cfg)
 }
 
-func runWithConfig(cfg config) error {
+func loadConfig(path string) (loadedConfig, error) {
+	f, err := configpkg.Load(path)
+	if err != nil {
+		return loadedConfig{}, fmt.Errorf("load config: %w", err)
+	}
+	base := configpkg.Apply(session.Config{}, f)
+	profiles := make([]supervisor.Profile, 0, len(f.Profiles))
+	for i, profile := range f.Profiles {
+		name := profile.Name
+		if name == "" {
+			name = fmt.Sprintf("profile-%d", i+1)
+		}
+		profiles = append(profiles, supervisor.Profile{
+			Name:   name,
+			Config: configpkg.ApplyProfile(base, profile),
+		})
+	}
+	failover, err := parseFailoverConfig(f.Failover)
+	if err != nil {
+		return loadedConfig{}, err
+	}
+	return loadedConfig{
+		scfg:       base,
+		profiles:   profiles,
+		failover:   failover,
+		dataDir:    f.Data,
+		debug:      f.Debug,
+		ffmpegPath: f.FFmpeg,
+	}, nil
+}
+
+func parseFailoverConfig(f configpkg.Failover) (failoverConfig, error) {
+	retryDelay := supervisor.DefaultRetryDelay
+	if f.RetryDelay != "" {
+		parsed, err := time.ParseDuration(f.RetryDelay)
+		if err != nil {
+			return failoverConfig{}, fmt.Errorf("parse failover.retry_delay: %w", err)
+		}
+		retryDelay = parsed
+	}
+	return failoverConfig{retryDelay: retryDelay, maxCycles: f.MaxCycles}, nil
+}
+
+func runWithConfig(cfg loadedConfig) error {
 	configureLogging(cfg.debug)
 
 	if cfg.ffmpegPath != "ffmpeg" && cfg.ffmpegPath != "" {
 		videochannel.FFmpegPath = cfg.ffmpegPath
 	}
 
-	if cfg.mode == modeGen {
-		return runGen(cfg)
+	scfg, err := session.ApplyAuthDefaults(cfg.scfg)
+	if err != nil {
+		return fmt.Errorf("validate config: %w", err)
+	}
+	scfg = session.ApplyTransportDefaults(scfg)
+	scfg = session.ApplyLivenessDefaults(scfg)
+
+	if scfg.Mode == modeGen {
+		if len(cfg.profiles) > 0 {
+			return ErrProfilesUnsupportedForGen
+		}
+		return runGen(scfg)
 	}
 
-	if err := session.Validate(toSessionConfig(cfg)); err != nil {
+	if len(cfg.profiles) > 0 {
+		profiles, err := prepareProfiles(cfg.profiles)
+		if err != nil {
+			return err
+		}
+		return runFailoverSessionMode(cfg.dataDir, profiles, cfg.failover)
+	}
+
+	return runSessionMode(cfg.dataDir, scfg)
+}
+
+func prepareProfiles(profiles []supervisor.Profile) ([]supervisor.Profile, error) {
+	out := make([]supervisor.Profile, 0, len(profiles))
+	for _, profile := range profiles {
+		scfg, err := session.ApplyAuthDefaults(profile.Config)
+		if err != nil {
+			return nil, fmt.Errorf("validate profile %q: %w", profile.Name, err)
+		}
+		profile.Config = session.ApplyLivenessDefaults(session.ApplyTransportDefaults(scfg))
+		out = append(out, profile)
+	}
+	return out, nil
+}
+
+func runSessionMode(dataDir string, scfg session.Config) error {
+	if err := session.Validate(scfg); err != nil {
 		return fmt.Errorf("validate config: %w", err)
 	}
 
-	if cfg.dataDir == "" {
+	if err := prepareRuntimeData(dataDir); err != nil {
+		return err
+	}
+
+	return runManaged(func(ctx context.Context) error {
+		return runSession(ctx, scfg)
+	})
+}
+
+func runFailoverSessionMode(dataDir string, profiles []supervisor.Profile, failover failoverConfig) error {
+	for _, profile := range profiles {
+		if err := session.Validate(profile.Config); err != nil {
+			return fmt.Errorf("validate profile %q: %w", profile.Name, err)
+		}
+	}
+
+	if err := prepareRuntimeData(dataDir); err != nil {
+		return err
+	}
+
+	return runManaged(func(ctx context.Context) error {
+		return supervisor.Run(ctx, supervisor.Config{
+			Profiles:   profiles,
+			RetryDelay: failover.retryDelay,
+			MaxCycles:  failover.maxCycles,
+			OnProfileStart: func(profile supervisor.Profile, cycle int) {
+				logger.Infof("failover cycle=%d starting profile=%s carrier=%s transport=%s",
+					cycle, profile.Name, profile.Config.Auth, profile.Config.Transport)
+			},
+			OnProfileEnd: func(profile supervisor.Profile, cycle int, err error) {
+				if err != nil {
+					logger.Warnf("failover cycle=%d profile=%s ended with error: %v", cycle, profile.Name, err)
+					return
+				}
+				logger.Warnf("failover cycle=%d profile=%s ended", cycle, profile.Name)
+			},
+			OnStatus: logFailoverStatus,
+		}, runSession)
+	})
+}
+
+func logFailoverStatus(status supervisor.Status) {
+	if !logger.IsVerbose() {
+		return
+	}
+	active := status.ActiveProfile
+	if active == "" {
+		active = "none"
+	}
+	logger.Debugf("failover status cycle=%d active=%s last_error=%q profiles=%s history=%d",
+		status.Cycle, active, status.LastError, formatProfileStatuses(status.Profiles), len(status.History))
+}
+
+func formatProfileStatuses(profiles []supervisor.ProfileStatus) string {
+	if len(profiles) == 0 {
+		return "[]"
+	}
+	var buf bytes.Buffer
+	buf.WriteByte('[')
+	for i, profile := range profiles {
+		if i > 0 {
+			buf.WriteByte(' ')
+		}
+		fmt.Fprintf(&buf, "%s{starts=%d failures=%d clean=%d}",
+			profile.Name, profile.Starts, profile.Failures, profile.CleanEnds)
+	}
+	buf.WriteByte(']')
+	return buf.String()
+}
+
+func prepareRuntimeData(dataDir string) error {
+	if dataDir == "" {
 		return ErrDataDirRequired
 	}
 
-	dataDir, err := resolveDataDir(cfg.dataDir)
+	resolvedDataDir, err := resolveDataDir(dataDir)
 	if err != nil {
 		return err
 	}
 
-	if err := loadNames(dataDir); err != nil {
+	if err := loadNames(resolvedDataDir); err != nil {
 		return err
 	}
 
+	return nil
+}
+
+func runManaged(run func(context.Context) error) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -126,7 +276,7 @@ func runWithConfig(cfg config) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- runSession(ctx, toSessionConfig(cfg))
+		errCh <- run(ctx)
 	}()
 
 	select {
@@ -139,8 +289,7 @@ func runWithConfig(cfg config) error {
 	}
 }
 
-func execGen(cfg config) error {
-	scfg := toSessionConfig(cfg)
+func execGen(scfg session.Config) error {
 	if err := session.ValidateGen(scfg); err != nil {
 		return fmt.Errorf("validate gen config: %w", err)
 	}
@@ -165,64 +314,44 @@ func execGen(cfg config) error {
 	}
 }
 
-func parseFlagsFrom(args []string, errorHandling flag.ErrorHandling) (config, error) {
-	cfg := config{}
-	fs := flag.NewFlagSet("olcrtc", errorHandling)
-	if errorHandling == flag.ContinueOnError {
-		fs.SetOutput(io.Discard)
+// noisyPrefixes lists log prefixes from third-party libs that spam via std log.
+var noisyPrefixes = [][]byte{ //nolint:gochecknoglobals // package-level filter list
+	[]byte("turnc"), []byte("[turn]"), []byte("Fail to refresh permissions"),
+}
+
+// filteredWriter wraps an io.Writer and drops lines whose prefix matches noisyPrefixes.
+type filteredWriter struct{ w io.Writer }
+
+func (f filteredWriter) Write(p []byte) (int, error) {
+	for _, prefix := range noisyPrefixes {
+		if bytes.Contains(p, prefix) {
+			return len(p), nil
+		}
 	}
-
-	fs.StringVar(&cfg.mode, "mode", "", "Mode: srv or cnc")
-	fs.StringVar(&cfg.link, "link", "", "Link: direct (p2p connection type)")
-	fs.StringVar(&cfg.transport, "transport", "", "Transport: datachannel, videochannel, seichannel")
-	fs.StringVar(&cfg.carrier, "carrier", "", "Carrier: telemost, jazz, wbstream")
-	fs.StringVar(&cfg.roomID, "id", "", "Room ID")
-	fs.StringVar(&cfg.clientID, "client-id", "", "Client ID: binds one srv to one cnc (required)")
-	fs.IntVar(&cfg.socksPort, "socks-port", 0, "SOCKS5 port (client only)")
-	fs.StringVar(&cfg.socksHost, "socks-host", "", "SOCKS5 listen host (client only)")
-	fs.StringVar(&cfg.socksUser, "socks-user", "", "SOCKS5 username for incoming connections (client only, optional)")
-	fs.StringVar(&cfg.socksPass, "socks-pass", "", "SOCKS5 password for incoming connections (client only, optional)")
-	fs.StringVar(&cfg.keyHex, "key", "", "Shared encryption key (hex)")
-	fs.BoolVar(&cfg.debug, "debug", false, "Enable verbose logging")
-	fs.StringVar(&cfg.dataDir, "data", "", "Path to data directory")
-	fs.StringVar(&cfg.dnsServer, "dns", "", "DNS server (e.g. 1.1.1.1:53)")
-	fs.StringVar(&cfg.socksProxyAddr, "socks-proxy", "", "SOCKS5 proxy address (server only)")
-	fs.IntVar(&cfg.socksProxyPort, "socks-proxy-port", 0, "SOCKS5 proxy port (server only)")
-	fs.IntVar(&cfg.videoWidth, "video-w", 0, "Video logical width (videochannel only)")
-	fs.IntVar(&cfg.videoHeight, "video-h", 0, "Video logical height (videochannel only)")
-	fs.IntVar(&cfg.videoFPS, "video-fps", 0, "Video frames per second (videochannel only)")
-	fs.StringVar(&cfg.videoBitrate, "video-bitrate", "", "Video bitrate (videochannel only)")
-	fs.StringVar(&cfg.videoHW, "video-hw", "", "Hardware acceleration (none, nvenc)")
-	fs.IntVar(&cfg.videoQRSize, "video-qr-size", 0, "Video QR code fragment size (videochannel only)")
-	fs.StringVar(&cfg.videoQRRecovery, "video-qr-recovery", "low",
-		"QR error correction: low (7%), medium (15%), high (25%), highest (30%)")
-	fs.StringVar(&cfg.videoCodec, "video-codec", "qrcode", "Visual codec: qrcode or tile")
-	fs.IntVar(&cfg.videoTileModule, "video-tile-module", 0,
-		"Tile module size in pixels 1..270 (videochannel tile only, default 4)")
-	fs.IntVar(&cfg.videoTileRS, "video-tile-rs", 0,
-		"Tile Reed-Solomon parity percent 0..200 (videochannel tile only, default 20)")
-	fs.IntVar(&cfg.vp8FPS, "vp8-fps", 0, "VP8 frames per second (vp8channel only, default 25)")
-	fs.IntVar(&cfg.vp8BatchSize, "vp8-batch", 0, "VP8 frames per tick (vp8channel only, default 1)")
-	fs.IntVar(&cfg.seiFPS, "fps", 0, "Frames per second for transports that use video timing (seichannel)")
-	fs.IntVar(&cfg.seiBatchSize, "batch", 0, "Transport frames per tick for batched transports (seichannel)")
-	fs.IntVar(&cfg.seiFragmentSize, "frag", 0, "Fragment size in bytes for fragmented transports (seichannel)")
-	fs.IntVar(&cfg.seiAckTimeoutMS, "ack-ms", 0, "ACK timeout in milliseconds for reliable visual transports (seichannel)")
-	fs.IntVar(&cfg.amount, "amount", 0, "Number of rooms to generate (gen mode only)")
-	fs.StringVar(&cfg.ffmpegPath, "ffmpeg", "ffmpeg", "Path to ffmpeg executable")
-
-	if err := fs.Parse(args); err != nil {
-		return cfg, fmt.Errorf("parse flags: %w", err)
+	n, err := f.w.Write(p)
+	if err != nil {
+		return n, fmt.Errorf("log write: %w", err)
 	}
+	return n, nil
+}
 
-	return cfg, nil
+func isNoisyLogLine(line []byte) bool {
+	for _, prefix := range noisyPrefixes {
+		if bytes.Contains(line, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func configureLogging(debug bool) {
+	installStderrFilter()
+	log.SetOutput(filteredWriter{w: os.Stderr})
+	logger.DisableNoisyPionLogs()
 	if debug {
 		logger.SetVerbose(true)
 		return
 	}
-	// Suppress noisy LiveKit/pion logs unless debug is enabled.
 	_ = os.Setenv("PION_LOG_DISABLE", "all")
 	lksdk.SetLogger(protoLogger.GetDiscardLogger())
 }
@@ -248,42 +377,6 @@ func loadNames(dataDir string) error {
 	}
 
 	return nil
-}
-
-func toSessionConfig(cfg config) session.Config {
-	return session.Config{
-		Mode:            cfg.mode,
-		Link:            cfg.link,
-		Transport:       cfg.transport,
-		Carrier:         cfg.carrier,
-		RoomID:          cfg.roomID,
-		ClientID:        cfg.clientID,
-		KeyHex:          cfg.keyHex,
-		SOCKSHost:       cfg.socksHost,
-		SOCKSPort:       cfg.socksPort,
-		SOCKSUser:       cfg.socksUser,
-		SOCKSPass:       cfg.socksPass,
-		DNSServer:       cfg.dnsServer,
-		SOCKSProxyAddr:  cfg.socksProxyAddr,
-		SOCKSProxyPort:  cfg.socksProxyPort,
-		VideoWidth:      cfg.videoWidth,
-		VideoHeight:     cfg.videoHeight,
-		VideoFPS:        cfg.videoFPS,
-		VideoBitrate:    cfg.videoBitrate,
-		VideoHW:         cfg.videoHW,
-		VideoQRSize:     cfg.videoQRSize,
-		VideoQRRecovery: cfg.videoQRRecovery,
-		VideoCodec:      cfg.videoCodec,
-		VideoTileModule: cfg.videoTileModule,
-		VideoTileRS:     cfg.videoTileRS,
-		VP8FPS:          cfg.vp8FPS,
-		VP8BatchSize:    cfg.vp8BatchSize,
-		SEIFPS:          cfg.seiFPS,
-		SEIBatchSize:    cfg.seiBatchSize,
-		SEIFragmentSize: cfg.seiFragmentSize,
-		SEIAckTimeoutMS: cfg.seiAckTimeoutMS,
-		Amount:          cfg.amount,
-	}
 }
 
 func waitForShutdown(errCh <-chan error) error {

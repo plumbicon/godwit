@@ -24,16 +24,17 @@ import (
 	"time"
 
 	"github.com/openlibrecommunity/olcrtc/internal/crypto"
-	"github.com/openlibrecommunity/olcrtc/internal/link"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
+	"github.com/openlibrecommunity/olcrtc/internal/transport"
 )
 
 // ErrClosed is returned from Read/Write after the conn has been closed.
 var ErrClosed = errors.New("muxconn: closed")
 
-// Conn is an io.ReadWriteCloser over a link.Link with optional AEAD wrapping.
+// Conn is an io.ReadWriteCloser over a [transport.Transport] with optional AEAD wrapping.
 type Conn struct {
-	ln     link.Link
+	ln     transport.Transport
+	send   func([]byte) error
 	cipher *crypto.Cipher
 
 	mu     sync.Mutex
@@ -42,12 +43,38 @@ type Conn struct {
 	closed bool
 }
 
-// New wires a Conn over the given link. Push must be set as the link's OnData
-// callback before this conn is used.
-func New(ln link.Link, cipher *crypto.Cipher) *Conn {
-	c := &Conn{ln: ln, cipher: cipher}
+// New wires a Conn over the given transport. Push must be set as the
+// transport's OnData callback before this conn is used.
+func New(ln transport.Transport, cipher *crypto.Cipher) *Conn {
+	c := &Conn{ln: ln, send: ln.Send, cipher: cipher}
 	c.cond = sync.NewCond(&c.mu)
 	return c
+}
+
+// NewPeer wires a Conn whose writes are addressed to a specific transport peer.
+func NewPeer(ln transport.PeerTransport, cipher *crypto.Cipher, peerID string) *Conn {
+	c := &Conn{
+		ln: ln,
+		send: func(data []byte) error {
+			return ln.SendTo(peerID, data)
+		},
+		cipher: cipher,
+	}
+	c.cond = sync.NewCond(&c.mu)
+	return c
+}
+
+// Reset clears any buffered inbound bytes, re-arms a closed conn for writes,
+// and unblocks pending Reads so the smux session on top of it exits cleanly.
+// Use it when the link stays up but the peer's smux session has been rebuilt:
+// the inbound byte stream (now indistinguishable random-looking data) must be
+// parsed by the fresh smux state, not the old one.
+func (c *Conn) Reset() {
+	c.mu.Lock()
+	c.buf = nil
+	c.closed = false
+	c.cond.Broadcast()
+	c.mu.Unlock()
 }
 
 // Push hands an encrypted wire payload (one OnData event) to the conn.
@@ -110,7 +137,7 @@ func (c *Conn) Write(p []byte) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("encrypt: %w", err)
 	}
-	if err := c.ln.Send(enc); err != nil {
+	if err := c.send(enc); err != nil {
 		return 0, fmt.Errorf("send: %w", err)
 	}
 	return len(p), nil

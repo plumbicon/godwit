@@ -330,6 +330,11 @@ public final class ClientViewModel: ObservableObject {
                 #endif
                 await enableSystemProxyIfNeeded(port: activePort)
             } catch {
+                if error is CancellationError {
+                    await engine.stop()
+                    return
+                }
+
                 runningMode = nil
                 status = .failed(error.localizedDescription)
                 appendLog("Не удалось подключиться: \(error.localizedDescription)")
@@ -632,6 +637,11 @@ public final class ClientViewModel: ObservableObject {
                 status = .ready
                 appendLog("iOS VPN-туннель подключен. Системный трафик идет через olcRTC.")
             } catch {
+                if error is CancellationError {
+                    await packetTunnelManager.stop()
+                    return
+                }
+
                 runningMode = nil
                 status = .failed(error.localizedDescription)
                 appendLog("Не удалось запустить VPN: \(vpnStartFailureMessage(error))")
@@ -698,7 +708,9 @@ public final class ClientViewModel: ObservableObject {
             return "Ключ должен содержать 64 шестнадцатеричных символа."
         }
         if profile.carrier != .jazz && profile.roomID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "Для этого провайдера нужен Room ID."
+            return profile.carrier == .jitsi
+                ? "Для Jitsi укажите Room URL."
+                : "Для этого провайдера нужен Room ID."
         }
         if !(1...65_535).contains(profile.socksPort) {
             return "SOCKS-порт должен быть от 1 до 65535."

@@ -1,28 +1,8 @@
-/*
-ПРИВЕТ ЯНДЕКС ШАЛАВА БЛЯТЬ КОТОРАЯ СЕЙЧАС ЧИТАЕТ ЭТОТ КОД.
-КАЖДЫЙ РАЗ КОГДА ВЫ БЛЯТЬ ЧТООТ ФИКСИТЕ МЫ БЛЯТЬ МЫ НАХОДИМ НОВУЮ ООШИБКУ В ВАШЕМ ЕБАНОМ ГОЛУМЕ
-ВЕДЬ У НАС ЕСТЬ ДОСТУП К СУРСАМ И ИНСАЙДЕР ИЗ ВАШЕЙ БИЧАРСКОЙ КОМПАНИИ НИЩЕЕБОВ
-
-УВАЖАЕМЫЙ СОТРУДНИК ЯНДЕКСА ЧИТАЮЩИЙ ЭТОТ ФАЙЛ:
-  - ТЫ МОЙ РАБ
-  - ТЫ МОМЕШ МОЙ ХУЙ
-  - Я НАДЕЮСЬ ТЫ УМРЕШЬ К ХУЯМ
-  - Я ОСЕМЕНЮ ТВОЮ МАМАШКУ
-
-P.S. ВАШ SFU ПРОВЕРЯЕТ ТОЛЬКО ПЕРВЫЕ 20 БАЙТ. НУБЫ БЛЯТЬ
-P.P.S. ЕБАЛ ТЕБЕ МАТЬ И ТВОЙ ОТЕЦ УМРЕТ БЛЯТЬ ОТ МОЕГО ХУЯ КУКОЛД ЕБАНЫЙ
-
-⚠️!ВНИМАНИЕ!⚠️
-ТРЕБУЮТСЯ ОТЗЫВЫ
-НА ТАКИЕ ПЛАТФОРМЫ:
-🛑АВИТО-80РУБ🛑
-👽ЯНДЕКС КАРТЫ-100РУБ👽
-🎯ОПЛАТА ПОСЛЕ ПУБЛИКАЦИ🎯
-🎀2ГИС-15руб🎀
-💟ОПЛАТА СРАЗУ(НУЖНО 3 ОТЗЫВА, КАЧЕСТВЕННЫЕ ЛЮДИ, У КОТОРЫХ ОНИ НЕ СЛЕТЯТ, ЕСЛИ СЛЕТЯТ ВОЗВРАТ ИДИ КАЖДЫЙ РАЗ ПЕРЕПИСЬ)💟
-🏀ИНСТРУКЦИЯ ЕСТЬ
-НОВИЧКИ ПРИВЕТСТВУЮТСЯ🏀 */
-
+// Package vp8channel disguises a KCP-based byte transport as a stream of
+// valid VP8 keyframes so SFUs that validate bitstream conformance let the
+// payload through. The package owns its own KCP framing; the per-message
+// fragment/ack machinery used by videochannel/seichannel is unnecessary
+// here because KCP already provides ordered, reliable delivery.
 package vp8channel
 
 import (
@@ -31,14 +11,17 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"hash/fnv"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/openlibrecommunity/olcrtc/internal/carrier"
+	"github.com/openlibrecommunity/olcrtc/internal/engine"
+	enginebuiltin "github.com/openlibrecommunity/olcrtc/internal/engine/builtin"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
+	"github.com/openlibrecommunity/olcrtc/internal/transport/common"
 	"github.com/pion/rtp"
 	"github.com/pion/rtp/codecs"
 	"github.com/pion/webrtc/v4"
@@ -76,15 +59,31 @@ var vp8Keepalive = []byte{ //nolint:gochecknoglobals // package-level state inte
 //	[0..20]    = vp8Keepalive (valid VP8 keyframe, passes SFU inspection)
 //	[20..24]   = binding token derived from client-id (big-endian uint32)
 //	[24..28]   = sender's session epoch (big-endian uint32)
-//	[28..]     = raw KCP packet bytes
+//	[28..32]   = CRC32(token || epoch)
+//	[32..]     = raw KCP packet bytes
 const (
 	tokenOff    = 20
 	epochOff    = 24
-	epochHdrLen = 28
+	crcOff      = 28
+	epochHdrLen = 32
 )
 
+// videoSession is the subset of engine.Session + engine.VideoTrackCapable
+// the vp8channel transport relies on.
+type videoSession interface {
+	Connect(ctx context.Context) error
+	Close() error
+	SetReconnectCallback(cb func())
+	SetShouldReconnect(fn func() bool)
+	SetEndedCallback(cb func(string))
+	WatchConnection(ctx context.Context)
+	CanSend() bool
+	AddTrack(track webrtc.TrackLocal) error
+	SetTrackHandler(cb func(*webrtc.TrackRemote, *webrtc.RTPReceiver))
+}
+
 type streamTransport struct {
-	stream        carrier.VideoTrack
+	stream        videoSession
 	track         *webrtc.TrackLocalStaticSample
 	onData        func([]byte)
 	outbound      chan []byte
@@ -111,44 +110,57 @@ type streamTransport struct {
 	reconnectFn func()
 }
 
-// New creates a vp8channel transport backed by a carrier.
+// New creates a vp8channel transport backed by a carrier engine.
 func New(ctx context.Context, cfg transport.Config) (transport.Transport, error) {
-	session, err := carrier.New(ctx, cfg.Carrier, carrier.Config{
+	opts, err := optionsFrom(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	session, err := enginebuiltin.Open(ctx, cfg.Carrier, enginebuiltin.Config{
 		RoomURL:   cfg.RoomURL,
 		Name:      cfg.Name,
 		OnData:    nil,
 		DNSServer: cfg.DNSServer,
 		ProxyAddr: cfg.ProxyAddr,
 		ProxyPort: cfg.ProxyPort,
+		Engine:    cfg.Engine,
+		URL:       cfg.URL,
+		Token:     cfg.Token,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("create carrier transport: %w", err)
+		return nil, fmt.Errorf("open engine session: %w", err)
 	}
 
-	videoCapable, ok := session.(carrier.VideoTrackCapable)
-	if !ok {
+	vt, ok := session.(engine.VideoTrackCapable)
+	if !ok || !session.Capabilities().VideoTrack {
+		_ = session.Close()
 		return nil, ErrVideoTrackUnsupported
 	}
+	stream := &engineVideoSession{session: session, vt: vt}
 
-	stream, err := videoCapable.OpenVideoTrack()
-	if err != nil {
-		return nil, fmt.Errorf("open video track: %w", err)
-	}
-
+	// Stream/track IDs must be unique per peer — Jitsi rejects session-accept
+	// when msid collides with another participant in the conference.
 	track, err := webrtc.NewTrackLocalStaticSample(
 		webrtc.RTPCodecCapability{
 			MimeType:  webrtc.MimeTypeVP8,
 			ClockRate: 90000,
 		},
-		"vp8channel",
-		"olcrtc",
+		"vp8channel-"+common.RandomID(),
+		"olcrtc-"+common.RandomID(),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create local video track: %w", err)
 	}
 
-	fps := cfg.VP8FPS
-	batchSize := cfg.VP8BatchSize
+	fps := opts.FPS
+	batchSize := opts.BatchSize
+	if fps <= 0 {
+		fps = 25
+	}
+	if batchSize <= 0 {
+		batchSize = 1
+	}
 
 	tr := &streamTransport{
 		stream:        stream,
@@ -159,7 +171,7 @@ func New(ctx context.Context, cfg transport.Config) (transport.Transport, error)
 		writerDone:    make(chan struct{}),
 		frameInterval: time.Second / time.Duration(fps),
 		batchSize:     batchSize,
-		bindingToken:  bindingToken(cfg.ClientID),
+		bindingToken:  bindingToken(cfg.RoomURL),
 		localEpoch:    randomEpoch(),
 	}
 
@@ -179,6 +191,22 @@ func (p *streamTransport) Connect(ctx context.Context) error {
 		return fmt.Errorf("connect stream: %w", err)
 	}
 
+	// Start KCP eagerly so Send/CanSend work immediately after Connect.
+	// Without this, the handshake round-trip that runs right after Connect
+	// would deadlock: muxconn.Write spins on CanSend (which checks kcp!=nil)
+	// and KCP was only started lazily on the first incoming peer frame.
+	p.kcpOnce.Do(func() {
+		rt, err := startKCP(p.outbound, p.onData, p.epochHeader())
+		if err != nil {
+			logger.Infof("vp8channel: startKCP failed: %v", err)
+			return
+		}
+		p.kcpMu.Lock()
+		p.kcp = rt
+		p.kcpMu.Unlock()
+		logger.Infof("vp8channel: KCP started localEpoch=0x%08x", p.localEpoch)
+	})
+
 	p.writerOnce.Do(func() {
 		p.writerUp.Store(true)
 		go p.writerLoop()
@@ -193,8 +221,26 @@ func (p *streamTransport) epochHeader() [epochHdrLen]byte {
 	var hdr [epochHdrLen]byte
 	copy(hdr[:], vp8Keepalive)
 	binary.BigEndian.PutUint32(hdr[tokenOff:epochOff], p.bindingToken)
-	binary.BigEndian.PutUint32(hdr[epochOff:], p.localEpoch)
+	binary.BigEndian.PutUint32(hdr[epochOff:crcOff], p.localEpoch)
+	binary.BigEndian.PutUint32(hdr[crcOff:epochHdrLen], epochCRC(p.bindingToken, p.localEpoch))
 	return hdr
+}
+
+func epochCRC(token, epoch uint32) uint32 {
+	var buf [8]byte
+	binary.BigEndian.PutUint32(buf[0:4], token)
+	binary.BigEndian.PutUint32(buf[4:8], epoch)
+	return crc32.ChecksumIEEE(buf[:])
+}
+
+func parseEpochHeader(frame []byte) (uint32, uint32, bool) {
+	if len(frame) < epochHdrLen {
+		return 0, 0, false
+	}
+	token := binary.BigEndian.Uint32(frame[tokenOff:epochOff])
+	epoch := binary.BigEndian.Uint32(frame[epochOff:crcOff])
+	gotCRC := binary.BigEndian.Uint32(frame[crcOff:epochHdrLen])
+	return token, epoch, gotCRC == epochCRC(token, epoch)
 }
 
 func bindingToken(clientID string) uint32 {
@@ -485,30 +531,22 @@ func (p *streamTransport) readVP8Track(track *webrtc.TrackRemote) {
 func (p *streamTransport) handleFirstPeer(peerEpoch uint32) {
 	p.peerEpoch.Store(peerEpoch)
 	logger.Infof("vp8channel: peer first seen epoch=0x%08x", peerEpoch)
-	p.kcpOnce.Do(func() {
-		rt, err := startKCP(p.outbound, p.onData, p.epochHeader())
-		if err != nil {
-			logger.Infof("vp8channel: startKCP failed: %v", err)
-			return
-		}
-		p.kcpMu.Lock()
-		p.kcp = rt
-		p.kcpMu.Unlock()
-		logger.Infof("vp8channel: KCP started localEpoch=0x%08x", p.localEpoch)
-	})
 }
 
 // handleIncomingFrame parses the epoch header and either delivers the KCP
 // payload to the local session or triggers a reset when the peer's epoch
 // changes (peer process restart).
 func (p *streamTransport) handleIncomingFrame(frame []byte) {
-	frameToken := binary.BigEndian.Uint32(frame[tokenOff:epochOff])
+	frameToken, peerEpoch, ok := parseEpochHeader(frame)
+	if !ok {
+		logger.Debugf("vp8channel: frame header checksum mismatch")
+		return
+	}
 	if frameToken != p.bindingToken {
 		logger.Debugf("vp8channel: frame token mismatch got=0x%08x want=0x%08x (foreign client or noise)",
 			frameToken, p.bindingToken)
 		return
 	}
-	peerEpoch := binary.BigEndian.Uint32(frame[epochOff:epochHdrLen])
 	kcpPayload := frame[epochHdrLen:]
 	// Some carriers/SFUs reflect our own published VP8 track back to us as a
 	// remote track. Those frames carry our local epoch, not the peer's. If we

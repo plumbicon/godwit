@@ -43,6 +43,14 @@ pacman -S curl        # Arch / CacheOS / Manjaro
 dnf install curl      # Fedora
 ```
 
+### swap (ОЗУ)
+
+Если у вас меньше 4ГБ оперативной памяти, сборка может вылетать. **Обязательно включите SWAP**:
+
+```bash
+sudo fallocate -l 4G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+```
+
 ---
 
 ## Шаг 1: Скачать репозиторий
@@ -82,19 +90,20 @@ cd olcrtc
 ./script/srv.sh --branch=dev --no-cache # ветка dev, без кеша
 ```
 
-### Carrier (на каком сервисе передавать трафик)
+### Auth (на каком сервисе передавать трафик)
 
 ```
-Select carrier:
-  1) telemost
-  2) jazz
-  3) wbstream
-Enter choice [1-3, default: 3]:
+Select auth provider:
+  1) jitsi
+  2) telemost
+  3) jazz
+  4) wbstream
+Enter choice [1-4, default: 1]:
 ```
 
 Выбери сервис. Полную матрицу совместимости смотри в [settings.md](settings.md).
 
-**По умолчанию `wbstream`** - работает со всеми транспортами, рекомендуется.
+**По умолчанию `jitsi`** — стабильно работает на datachannel против self-hosted и публичных Jitsi инстансов (например `meet.cryptopro.ru`).
 
 ### Transport (как именно передавать данные)
 
@@ -108,12 +117,12 @@ Enter choice [1-4, default: 1]:
 ```
 
 Рекомендации:
-- **datachannel** - самый быстрый, минимальный пинг. Работает с `jazz` и `wbstream`. **Jazz банит IP за datachannel** - лучше используй только с `wbstream`.
-- **vp8channel** - работает везде, быстрый, но большой пинг.
-- **seichannel** - работает везде кроме telemost, медленный, но мелкий пинг.
-- **videochannel** - работает везде, самый медленный и большой пинг.
+- **datachannel** - самый быстрый, минимальный пинг. Стабильно работает с `jitsi` через colibri-ws bridge channel. С `jazz` тоже работает, но Jazz банит IP за паттерны трафика. **WBStream DC не работает** в обычном guest flow (токены без `canPublishData`). **Telemost удалил DC**.
+- **vp8channel** - работает с telemost и wbstream, быстрый, но большой пинг.
+- **seichannel** - работает только с wbstream, медленный, но мелкий пинг.
+- **videochannel** - работает с wbstream (стабильно) и telemost (best effort), самый медленный и большой пинг.
 
-**Лучшая комбинация: `wbstream + datachannel`** - максимальная скорость, минимальный пинг, без риска бана.
+**Рекомендуемая комбинация: `jitsi + datachannel`** — работает стабильно, не требует регистрации, легко поднимать на своём сервере. Альтернатива: `wbstream + vp8channel`.
 
 ### Room ID
 
@@ -121,19 +130,11 @@ Enter choice [1-4, default: 1]:
 Enter Room ID:
 ```
 
+Для **jitsi** — полный URL комнаты в формате `https://host/room` (например `https://meet.cryptopro.ru/myroom`). Имя комнаты придумывается на лету, без регистрации. Подойдёт любой публичный или self-hosted Jitsi Meet.
+
 Для **telemost** и **wbstream** - создай руму через сайт ([телемост](https://telemost.yandex.ru/), [wbstream](https://stream.wb.ru)) и вставь её ID.
 
 Для **jazz** скрипт предложит выбор: сгенерировать автоматически (рекомендуется) или ввести существующий ID. При автогенерации скрипт запустит `gen` и получит ID до старта сервера. Также можно создать руму через сайт [jazz](https://salutejazz.ru/calls/create).
-
-### Client ID
-
-```
-Enter Client ID [default: default]:
-```
-
-Это обязательный идентификатор клиента. Он должен быть одинаковым на сервере и клиенте - используется чтобы клиент подключался именно к вашему серверу, а не к случайному серверу в руме.
-
-Один `-client-id` технически может держать бесконечное количество одновременных соединений. Однако SFU ограничивает полосу пропускания на одного участника звонка, поэтому оптимально использовать схему **1 client-id = 1 пользователь** - но это не обязательное требование.
 
 ### DNS
 
@@ -232,14 +233,13 @@ SEI ACK timeout in milliseconds [default: 3000]: 2000
 [+] Server started successfully!
 
 Container name: olcrtc-server
-Carrier:        Carrier
-Transport:      Transport
-Room ID:        Room ID
-Client ID:      default
-Encryption key: Encryption key
+Auth:           wbstream
+Transport:      datachannel
+Room ID:        abc123xyz
+Encryption key: d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799
 ```
 
-**Сохрани Room ID, Client ID и Encryption key** - они нужны для клиента.
+**Сохрани Room ID и Encryption key** - они нужны для клиента.
 
 ---
 
@@ -253,15 +253,7 @@ cd olcrtc
 ./script/cnc.sh
 ```
 
-Отвечай на те же вопросы что на сервере - **carrier, transport, room ID и client ID должны совпадать**.
-
-Когда спросит client ID:
-
-```
-Enter Client ID [default: default]: default
-```
-
-Введи тот же `client ID`, который использовал на сервере.
+Отвечай на те же вопросы что на сервере - **auth, transport и room ID должны совпадать**.
 
 Когда спросит ключ:
 
@@ -294,7 +286,6 @@ SOCKS5 username (leave empty to disable auth):
 [+] Client started successfully!
 
 Container name: olcrtc-client
-Client ID:      default
 SOCKS5 proxy:   127.0.0.1:8808
 ```
 
@@ -341,4 +332,4 @@ podman stop olcrtc-client
 
 Хочешь собрать руками без Podman? -> [Мануальная сборка](manual.md)
 
-Все флаги и матрица совместимости -> [settings.md](settings.md)
+Все настройки и матрица совместимости -> [settings.md](settings.md)

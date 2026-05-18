@@ -3,11 +3,36 @@ package protect
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"regexp"
+	"strings"
 	"syscall"
 	"time"
+
+	"github.com/gorilla/websocket"
+)
+
+const (
+	defaultDialTimeout       = 10 * time.Second
+	defaultKeepAlive         = 30 * time.Second
+	defaultIdleConnTimeout   = 30 * time.Second
+	defaultTLSHandshake      = 10 * time.Second
+	defaultResponseHeader    = 10 * time.Second
+	defaultWebSocketTimeout  = 10 * time.Second
+	defaultHTTPClientTimeout = 30 * time.Second
+	defaultStatusBodyLimit   = 1024
+)
+
+var (
+	sensitiveFieldRE = regexp.MustCompile(
+		`(?i)((?:access[_-]?token|room[_-]?token|token|credentials)"?\s*[:=]\s*"?)` +
+			`[^",\s}]+`,
+	)
+	sensitiveBearerRE = regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+`)
 )
 
 // Protector is called with a socket file descriptor before connect.
@@ -33,24 +58,70 @@ func controlFunc(network, _ string, c syscall.RawConn) error {
 // NewDialer returns a net.Dialer that calls Protector on each new socket.
 func NewDialer() *net.Dialer {
 	return &net.Dialer{
-		Timeout:   10 * time.Second,
-		KeepAlive: 30 * time.Second,
+		Timeout:   defaultDialTimeout,
+		KeepAlive: defaultKeepAlive,
 		Control:   controlFunc,
+	}
+}
+
+// NewTLSConfig returns the shared TLS policy for provider HTTP/WebSocket clients.
+func NewTLSConfig() *tls.Config {
+	return &tls.Config{MinVersion: tls.VersionTLS12}
+}
+
+// NewHTTPTransport returns an HTTP transport using protected sockets and sane timeouts.
+func NewHTTPTransport() *http.Transport {
+	dialer := NewDialer()
+	return &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           dialer.DialContext,
+		TLSClientConfig:       NewTLSConfig(),
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          10,
+		IdleConnTimeout:       defaultIdleConnTimeout,
+		TLSHandshakeTimeout:   defaultTLSHandshake,
+		ResponseHeaderTimeout: defaultResponseHeader,
 	}
 }
 
 // NewHTTPClient returns an http.Client using protected sockets.
 func NewHTTPClient() *http.Client {
-	dialer := NewDialer()
-	transport := &http.Transport{
-		DialContext:           dialer.DialContext,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          10,
-		IdleConnTimeout:       30 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 10 * time.Second,
+	return &http.Client{
+		Transport: NewHTTPTransport(),
+		Timeout:   defaultHTTPClientTimeout,
 	}
-	return &http.Client{Transport: transport}
+}
+
+// NewWebSocketDialer returns a WebSocket dialer using protected sockets and shared TLS policy.
+func NewWebSocketDialer(handshakeTimeout time.Duration) websocket.Dialer {
+	if handshakeTimeout <= 0 {
+		handshakeTimeout = defaultWebSocketTimeout
+	}
+	return websocket.Dialer{
+		NetDialContext:   DialContext,
+		Proxy:            http.ProxyFromEnvironment,
+		TLSClientConfig:  NewTLSConfig(),
+		HandshakeTimeout: handshakeTimeout,
+	}
+}
+
+// StatusError formats an upstream HTTP error while bounding and redacting the body.
+func StatusError(base error, resp *http.Response, limit int64) error {
+	if limit <= 0 {
+		limit = defaultStatusBodyLimit
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, limit))
+	bodyText := RedactSensitive(strings.TrimSpace(string(body)))
+	if bodyText == "" {
+		return fmt.Errorf("%w: status %d", base, resp.StatusCode)
+	}
+	return fmt.Errorf("%w: status %d: %s", base, resp.StatusCode, bodyText)
+}
+
+// RedactSensitive removes common token-like values from provider error text.
+func RedactSensitive(text string) string {
+	text = sensitiveBearerRE.ReplaceAllString(text, "${1}<redacted>")
+	return sensitiveFieldRE.ReplaceAllString(text, "${1}<redacted>")
 }
 
 // DialContext dials using a protected socket.

@@ -15,6 +15,8 @@ public final class ProcessOlcRTCEngine: OlcRTCEngine {
     private var lastOptions: OlcRTCStartOptions?
     private var lastSupportRoot: URL?
     private var lastCliURL: URL?
+    private var lastOutputLine: String?
+    private var configURL: URL?
     private let maxPortRetries = 20
 
     public init() {}
@@ -71,7 +73,8 @@ public final class ProcessOlcRTCEngine: OlcRTCEngine {
                     isReady: ready,
                     isRunning: process?.isRunning == true,
                     portConflict: portConflictDetected,
-                    activePort: activePort
+                    activePort: activePort,
+                    lastOutputLine: lastOutputLine
                 )
             }
 
@@ -84,7 +87,7 @@ public final class ProcessOlcRTCEngine: OlcRTCEngine {
                    try await retryAfterPortConflict(currentPort: port) {
                     continue
                 }
-                throw OlcRTCEngineError.invalidProfile("olcRTC exited before SOCKS became ready.")
+                throw OlcRTCEngineError.invalidProfile(startFailureMessage(lastOutputLine: state.lastOutputLine))
             }
 
             try await Task.sleep(nanoseconds: 200_000_000)
@@ -115,9 +118,6 @@ public final class ProcessOlcRTCEngine: OlcRTCEngine {
     }
 
     private func validate(_ options: OlcRTCStartOptions) throws {
-        if !options.socksUser.isEmpty || !options.socksPass.isEmpty {
-            throw OlcRTCEngineError.unsupportedOption("SOCKS username/password are available only through Mobile.xcframework.")
-        }
         if options.clientID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             throw OlcRTCEngineError.invalidProfile("Client ID is required.")
         }
@@ -125,52 +125,77 @@ public final class ProcessOlcRTCEngine: OlcRTCEngine {
             throw OlcRTCEngineError.invalidProfile("Encryption key must be 64 hexadecimal characters.")
         }
         if options.carrierName != "jazz" && options.roomID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            throw OlcRTCEngineError.invalidProfile("Room ID is required for this carrier.")
+            let fieldName = options.carrierName == "jitsi" ? "Room URL" : "Room ID"
+            throw OlcRTCEngineError.invalidProfile("\(fieldName) is required for this carrier.")
         }
     }
 
-    private func arguments(options: OlcRTCStartOptions, supportRoot: URL, socksPort: Int) -> [String] {
-        var args = [
-            "-mode", "cnc",
-            "-link", "direct",
-            "-transport", options.transportName,
-            "-carrier", options.carrierName,
-            "-id", options.roomID,
-            "-client-id", options.clientID,
-            "-key", options.keyHex,
-            "-socks-host", "127.0.0.1",
-            "-socks-port", "\(socksPort)",
-            "-dns", options.dnsServer,
-            "-data", supportRoot.appendingPathComponent("data").path,
-            "-vp8-fps", "\(options.vp8FPS)",
-            "-vp8-batch", "\(options.vp8BatchSize)",
-            "-fps", "\(options.seiFPS)",
-            "-batch", "\(options.seiBatchSize)",
-            "-frag", "\(options.seiFragmentSize)",
-            "-ack-ms", "\(options.seiAckTimeoutMillis)",
-            "-video-codec", options.videoCodec,
-            "-video-w", "\(options.videoWidth)",
-            "-video-h", "\(options.videoHeight)",
-            "-video-fps", "\(options.videoFPS)",
-            "-video-bitrate", options.videoBitrate,
-            "-video-hw", options.videoHardwareAcceleration,
-            "-video-qr-recovery", options.videoQRRecovery,
-            "-video-qr-size", "\(options.videoQRSize)",
-            "-video-tile-module", "\(options.videoTileModule)",
-            "-video-tile-rs", "\(options.videoTileRS)",
-        ]
-        if options.debugLogging {
-            args.append("-debug")
-        }
-        return args
+    private func writeConfiguration(options: OlcRTCStartOptions, supportRoot: URL, socksPort: Int) throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Godwit", isDirectory: true)
+            .appendingPathComponent("olcrtc", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let url = directory.appendingPathComponent("client-\(UUID().uuidString).yaml")
+        let yaml = configurationYAML(options: options, supportRoot: supportRoot, socksPort: socksPort)
+        try yaml.write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    private func configurationYAML(options: OlcRTCStartOptions, supportRoot: URL, socksPort: Int) -> String {
+        """
+        mode: cnc
+        auth:
+          provider: \(yamlString(options.carrierName))
+        room:
+          id: \(yamlString(options.roomID))
+        crypto:
+          key: \(yamlString(options.keyHex))
+        net:
+          transport: \(yamlString(options.transportName))
+          dns: \(yamlString(options.dnsServer))
+        socks:
+          host: "127.0.0.1"
+          port: \(socksPort)
+          user: \(yamlString(options.socksUser))
+          pass: \(yamlString(options.socksPass))
+        vp8:
+          fps: \(options.vp8FPS)
+          batch_size: \(options.vp8BatchSize)
+        sei:
+          fps: \(options.seiFPS)
+          batch_size: \(options.seiBatchSize)
+          fragment_size: \(options.seiFragmentSize)
+          ack_timeout_ms: \(options.seiAckTimeoutMillis)
+        video:
+          width: \(options.videoWidth)
+          height: \(options.videoHeight)
+          fps: \(options.videoFPS)
+          bitrate: \(yamlString(options.videoBitrate))
+          hw: \(yamlString(options.videoHardwareAcceleration))
+          codec: \(yamlString(options.videoCodec))
+          qr_size: \(options.videoQRSize)
+          qr_recovery: \(yamlString(options.videoQRRecovery))
+          tile_module: \(options.videoTileModule)
+          tile_rs: \(options.videoTileRS)
+        data: \(yamlString(supportRoot.appendingPathComponent("data").path))
+        debug: \(options.debugLogging ? "true" : "false")
+
+        """
+    }
+
+    private func yamlString(_ value: String) -> String {
+        "'\(value.replacingOccurrences(of: "'", with: "''"))'"
     }
 
     private func launchProcess(options: OlcRTCStartOptions, supportRoot: URL, cliURL: URL, socksPort: Int) throws {
+        let configURL = try writeConfiguration(options: options, supportRoot: supportRoot, socksPort: socksPort)
+
         let task = Process()
         let pipe = Pipe()
         task.executableURL = cliURL
         task.currentDirectoryURL = supportRoot
-        task.arguments = arguments(options: options, supportRoot: supportRoot, socksPort: socksPort)
+        task.arguments = [configURL.path]
         task.standardOutput = pipe
         task.standardError = pipe
 
@@ -192,10 +217,13 @@ public final class ProcessOlcRTCEngine: OlcRTCEngine {
             stopping = false
             portConflictDetected = false
             activePort = socksPort
+            lastOutputLine = nil
+            removeConfigFile()
+            self.configURL = configURL
         }
 
         emit("Launching \(cliURL.path)")
-        emit(task.arguments?.joined(separator: " ") ?? "")
+        emit("Using olcRTC config \(configURL.path)")
         try task.run()
     }
 
@@ -236,6 +264,9 @@ public final class ProcessOlcRTCEngine: OlcRTCEngine {
                   !line.isEmpty else {
                 continue
             }
+            withLock {
+                lastOutputLine = line
+            }
             emit(line)
             if line.contains("address already in use") || line.contains("failed to listen") {
                 withLock {
@@ -267,11 +298,15 @@ public final class ProcessOlcRTCEngine: OlcRTCEngine {
             outputPipe?.fileHandleForReading.readabilityHandler = nil
             outputPipe = nil
             ready = false
+            removeConfigFile()
             return state
         }
 
         if let line = String(data: state.remaining, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
            !line.isEmpty {
+            withLock {
+                lastOutputLine = line
+            }
             emit(line)
         }
         if !state.wasStopping {
@@ -293,7 +328,29 @@ public final class ProcessOlcRTCEngine: OlcRTCEngine {
             lastOptions = nil
             lastSupportRoot = nil
             lastCliURL = nil
+            lastOutputLine = nil
+            removeConfigFile()
         }
+    }
+
+    private func startFailureMessage(lastOutputLine: String?) -> String {
+        guard let lastOutputLine, !lastOutputLine.isEmpty else {
+            return "olcRTC exited before SOCKS became ready."
+        }
+
+        if lastOutputLine.contains("read welcome") || lastOutputLine.contains("SERVER_WELCOME") {
+            return "olcRTC handshake timed out waiting for the server. Check that srv is running with the same provider, room, transport, encryption key, and client ID."
+        }
+
+        return "olcRTC exited before SOCKS became ready: \(lastOutputLine)"
+    }
+
+    private func removeConfigFile() {
+        guard let configURL else {
+            return
+        }
+        try? FileManager.default.removeItem(at: configURL)
+        self.configURL = nil
     }
 
     private func emit(_ message: String) {

@@ -156,7 +156,8 @@ public final class GomobileOlcRTCEngine: OlcRTCEngine {
             throw OlcRTCEngineError.invalidProfile("Encryption key must be 64 hexadecimal characters.")
         }
         if options.carrierName != "jazz" && options.roomID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            throw OlcRTCEngineError.invalidProfile("Room ID is required for this carrier.")
+            let fieldName = options.carrierName == "jitsi" ? "Room URL" : "Room ID"
+            throw OlcRTCEngineError.invalidProfile("\(fieldName) is required for this carrier.")
         }
         if !(1...65_535).contains(options.socksPort) {
             throw OlcRTCEngineError.invalidProfile("SOCKS port must be between 1 and 65535.")

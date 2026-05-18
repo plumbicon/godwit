@@ -123,6 +123,10 @@ public struct ProfileEditorView: View {
         .environment(\.defaultMinListHeaderHeight, 22)
         #endif
         .onDisappear(perform: onCommit)
+        .onChange(of: profile.carrier) { carrier in
+            profile.transport = carrier.recommendedTransport
+            onCommit()
+        }
     }
 }
 
@@ -155,7 +159,11 @@ private struct ConnectionSettingsCard: View {
 
             if isExpanded {
                 VStack(spacing: 0) {
-                    ConnectionTextRow(title: "Room ID", text: $profile.roomID, onCommit: onCommit)
+                    ConnectionTextRow(
+                        title: profile.carrier == .jitsi ? "Room URL" : "Room ID",
+                        text: $profile.roomID,
+                        onCommit: onCommit
+                    )
                     Divider()
 
                     ConnectionTextRow(title: "Client ID", text: $profile.clientID, onCommit: onCommit)
