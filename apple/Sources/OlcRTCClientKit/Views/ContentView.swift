@@ -432,13 +432,11 @@ private struct ProfilesHomeView: View {
 
     var body: some View {
         List {
-            Section {
-                ConnectionPanel(viewModel: viewModel)
-                    .listRowSeparator(.hidden, edges: .bottom)
-                    #if os(iOS)
-                    .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
-                    #endif
-            }
+            ConnectionPanel(viewModel: viewModel)
+                .listRowSeparator(.hidden, edges: .bottom)
+                #if os(iOS)
+                .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
+                #endif
 
             if !ungroupedProfiles.isEmpty {
                 Section("Профили") {
