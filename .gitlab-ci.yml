@@ -22,7 +22,6 @@ mobile:testflight:
   script:
     - export PATH="$HOME/Documents/golang/bin:/opt/homebrew/opt/go/libexec/bin:$PATH"
     - go version
-    - xcodegen --version 
     - cd apple
     - plutil -p Sources/OlcRTCClientiOS/Info.plist | grep UISupportedInterfaceOrientations
     - cd ..
