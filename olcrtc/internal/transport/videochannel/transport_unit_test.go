@@ -35,6 +35,7 @@ func (s *fakeVideoStream) SetEndedCallback(cb func(string))  { s.ended = cb }
 func (s *fakeVideoStream) WatchConnection(context.Context)   { s.watched = true }
 func (s *fakeVideoStream) CanSend() bool                     { return s.canSend }
 func (s *fakeVideoStream) AddTrack(webrtc.TrackLocal) error  { s.trackAdded = true; return nil }
+func (s *fakeVideoStream) Reconnect(string)                  {}
 func (s *fakeVideoStream) SetTrackHandler(cb func(*webrtc.TrackRemote, *webrtc.RTPReceiver)) {
 	s.trackCB = cb
 }
@@ -71,6 +72,7 @@ func (s *fakeEngineSession) WatchConnection(ctx context.Context) {
 func (s *fakeEngineSession) CanSend() bool                            { return s.stream.CanSend() }
 func (s *fakeEngineSession) GetSendQueue() chan []byte                { return nil }
 func (s *fakeEngineSession) GetBufferedAmount() uint64                { return 0 }
+func (s *fakeEngineSession) Reconnect(string)                         {}
 func (s *fakeEngineSession) AddVideoTrack(t webrtc.TrackLocal) error  { return s.stream.AddTrack(t) }
 func (s *fakeEngineSession) SetVideoTrackHandler(cb func(*webrtc.TrackRemote, *webrtc.RTPReceiver)) {
 	s.stream.SetTrackHandler(cb)

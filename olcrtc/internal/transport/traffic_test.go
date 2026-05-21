@@ -23,6 +23,7 @@ func (s *trafficStubTransport) SetShouldReconnect(func() bool)  {}
 func (s *trafficStubTransport) SetEndedCallback(func(string))   {}
 func (s *trafficStubTransport) WatchConnection(context.Context) {}
 func (s *trafficStubTransport) CanSend() bool                   { return true }
+func (s *trafficStubTransport) Reconnect(string)                {}
 func (s *trafficStubTransport) Features() Features              { return s.features }
 
 func TestWithTrafficReturnsInnerWhenDisabled(t *testing.T) {

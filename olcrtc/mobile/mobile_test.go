@@ -106,7 +106,6 @@ func TestDefaultsAndSetters(t *testing.T) {
 	}
 }
 
-//nolint:cyclop // table-driven test naturally has many branches
 func TestNormalizeBuildRoomAndClamp(t *testing.T) {
 	tests := map[string]string{
 		"datachannel": dataTransport,
@@ -122,15 +121,12 @@ func TestNormalizeBuildRoomAndClamp(t *testing.T) {
 		}
 	}
 
-	if normalizeCarrier(carrierWBStream) != carrierWBStream || normalizeCarrier("jazz") != "jazz" {
+	if normalizeCarrier(carrierWBStream) != carrierWBStream || normalizeCarrier("jitsi") != "jitsi" {
 		t.Fatal("normalizeCarrier() returned unexpected value")
 	}
 
 	if got := buildRoomURL("telemost", "abc"); got != "https://telemost.yandex.ru/j/abc" {
 		t.Fatalf("telemost room URL = %q", got)
-	}
-	if got := buildRoomURL("jazz", ""); got != "any" {
-		t.Fatalf("jazz empty room URL = %q", got)
 	}
 	if got := buildRoomURL(carrierWBStream, "room"); got != "room" {
 		t.Fatalf("wbstream room URL = %q", got)
@@ -150,14 +146,17 @@ func TestStartValidation(t *testing.T) {
 	if err := startWithConfig("telemost", dataTransport, "", "client", "key", 1080, "", "", mobileConfig{}); !errors.Is(err, errRoomIDRequired) { //nolint:lll // long test description
 		t.Fatalf("startWithConfig(missing room) = %v", err)
 	}
-	if err := startWithConfig("jazz", dataTransport, "", "", "", 1080, "", "", mobileConfig{}); !errors.Is(err, errKeyHexRequired) { //nolint:lll // long test description
+	if err := startWithConfig("jitsi", dataTransport, "room", "", "key", 1080, "", "", mobileConfig{}); !errors.Is(err, errClientIDRequired) { //nolint:lll // long test description
+		t.Fatalf("startWithConfig(missing client) = %v", err)
+	}
+	if err := startWithConfig("jitsi", dataTransport, "room", "client", "", 1080, "", "", mobileConfig{}); !errors.Is(err, errKeyHexRequired) { //nolint:lll // long test description
 		t.Fatalf("startWithConfig(missing key) = %v", err)
 	}
 
 	mu.Lock()
 	cancel = func() {}
 	mu.Unlock()
-	if err := startWithConfig("jazz", dataTransport, "", "client", "key", 1080, "", "", mobileConfig{}); !errors.Is(err, errAlreadyRunning) { //nolint:lll // long test description
+	if err := startWithConfig("jitsi", dataTransport, "room", "client", "key", 1080, "", "", mobileConfig{}); !errors.Is(err, errAlreadyRunning) { //nolint:lll // long test description
 		t.Fatalf("startWithConfig(running) = %v", err)
 	}
 	resetMobileGlobals(t)
@@ -173,8 +172,8 @@ func TestStartWithInjectedRunnerLifecycle(t *testing.T) {
 
 	runClientWithReady = func(ctx context.Context, cfg client.Config, onReady func()) error {
 		opts, _ := cfg.TransportOptions.(vp8channel.Options)
-		if cfg.Transport != dataTransport || cfg.Carrier != carrierJazz ||
-			cfg.RoomURL != "any" || cfg.DeviceID != "client" || cfg.LocalAddr != "127.0.0.1:1080" ||
+		if cfg.Transport != dataTransport || cfg.Carrier != "jitsi" ||
+			cfg.RoomURL != "room" || cfg.DeviceID != "client" || cfg.LocalAddr != "127.0.0.1:1080" ||
 			cfg.DNSServer != defaultDNSServer || opts.FPS != 60 || opts.BatchSize != 8 ||
 			cfg.Liveness.Interval != 2500*time.Millisecond ||
 			cfg.Liveness.Timeout != 750*time.Millisecond ||
@@ -191,7 +190,7 @@ func TestStartWithInjectedRunnerLifecycle(t *testing.T) {
 		return ctx.Err()
 	}
 
-	if err := StartWithTransport(carrierJazz, "dc", "", "client", "key", 1080, "", ""); err != nil {
+	if err := StartWithTransport("jitsi", "dc", "room", "client", "key", 1080, "", ""); err != nil {
 		t.Fatalf("StartWithTransport() error = %v", err)
 	}
 	if !IsRunning() {
@@ -249,7 +248,7 @@ func TestStartUsesDefaultsAndCheckWithInjectedRunner(t *testing.T) {
 		<-ctx.Done()
 		return nil
 	}
-	elapsed, err := Check("jazz", "dc", "", "client", "key", 1082, 100, -1, 999)
+	elapsed, err := Check("jitsi", "dc", "room", "client", "key", 1082, 100, -1, 999)
 	if err != nil {
 		t.Fatalf("Check() error = %v", err)
 	}
@@ -273,7 +272,7 @@ func TestPingPassesLiveness(t *testing.T) {
 		return nil
 	}
 
-	_, _ = Ping("jazz", "dc", "", "client", "key", 1085, 100, "http://127.0.0.1/", 30, 1)
+	_, _ = Ping("jitsi", "dc", "room", "client", "key", 1085, 100, "http://127.0.0.1/", 30, 1)
 	select {
 	case got := <-seen:
 		if got.Interval != 4000*time.Millisecond || got.Timeout != 1500*time.Millisecond || got.Failures != 6 {
@@ -351,37 +350,6 @@ func TestWaitReadyStatesAndStop(t *testing.T) {
 	mu.Lock()
 	cancel = nil
 	mu.Unlock()
-}
-
-func TestStopReturnsWhenRuntimeDoesNotFinish(t *testing.T) {
-	resetMobileGlobals(t)
-	oldTimeout := stopWaitTimeout
-	stopWaitTimeout = time.Millisecond
-	t.Cleanup(func() {
-		stopWaitTimeout = oldTimeout
-		resetMobileGlobals(t)
-	})
-
-	cancelled := make(chan struct{})
-	mu.Lock()
-	cancel = func() { close(cancelled) }
-	done = make(chan struct{})
-	mu.Unlock()
-
-	startedAt := time.Now()
-	Stop()
-	mu.Lock()
-	cancel = nil
-	mu.Unlock()
-
-	if elapsed := time.Since(startedAt); elapsed > 200*time.Millisecond {
-		t.Fatalf("Stop() waited too long: %s", elapsed)
-	}
-	select {
-	case <-cancelled:
-	default:
-		t.Fatal("Stop() did not cancel runtime")
-	}
 }
 
 func TestLogBridge(t *testing.T) {

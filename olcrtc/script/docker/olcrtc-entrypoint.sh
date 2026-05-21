@@ -55,7 +55,7 @@ case "$mode" in
     srv|cnc) ;;
     *) die "set OLCRTC_MODE to srv or cnc" ;;
 esac
-[ -n "$carrier" ] || die "set OLCRTC_CARRIER (e.g. jitsi, telemost, jazz, wbstream)"
+[ -n "$carrier" ] || die "set OLCRTC_CARRIER (e.g. jitsi, telemost, wbstream)"
 [ -n "$transport" ] || die "set OLCRTC_TRANSPORT (e.g. datachannel, videochannel, seichannel, vp8channel)"
 
 make_key() {
@@ -67,30 +67,7 @@ make_key() {
 }
 
 if [ -z "$room_id" ]; then
-    case "$carrier" in
-        jazz)
-            [ "$mode" = "srv" ] || die "set OLCRTC_ROOM_ID to the server room identifier"
-            echo "olcrtc-entrypoint: OLCRTC_ROOM_ID not set, generating room..." >&2
-            gen_config="/tmp/olcrtc-gen.yaml"
-            cat > "$gen_config" <<GENEOF
-mode: gen
-auth:
-  provider: "$carrier"
-net:
-  dns: "$dns_server"
-gen:
-  amount: 1
-data: "$data_dir"
-GENEOF
-            room_id=$(/usr/local/bin/olcrtc "$gen_config")
-            [ -n "$room_id" ] || die "room generation failed for carrier '$carrier'"
-            echo "olcrtc-entrypoint: generated room ID: $room_id" >&2
-            rm -f "$gen_config"
-            ;;
-        *)
-            die "set OLCRTC_ROOM_ID to the room identifier"
-            ;;
-    esac
+    die "set OLCRTC_ROOM_ID to the room identifier"
 fi
 
 if [ -z "$key" ]; then

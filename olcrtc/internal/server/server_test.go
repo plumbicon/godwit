@@ -53,9 +53,10 @@ func TestSmuxConfig(t *testing.T) {
 		t.Fatalf("smuxConfig(0) = %+v", cfg)
 	}
 	capped := smuxConfig(4096)
-	if capped.MaxFrameSize != 4096-cryptopkg.WireOverhead {
+	want := 4096 - runtime.SmuxWireOverhead
+	if capped.MaxFrameSize != want {
 		t.Fatalf("smuxConfig(4096).MaxFrameSize = %d, want %d",
-			capped.MaxFrameSize, 4096-cryptopkg.WireOverhead)
+			capped.MaxFrameSize, want)
 	}
 }
 
@@ -225,6 +226,7 @@ func (s *serverLinkStub) SetEndedCallback(func(string))   {}
 func (s *serverLinkStub) WatchConnection(context.Context) {}
 func (s *serverLinkStub) CanSend() bool                   { return true }
 func (s *serverLinkStub) Features() transport.Features    { return transport.Features{} }
+func (s *serverLinkStub) Reconnect(string)                {}
 func (s *serverLinkStub) ResetPeer() {
 	s.resetCount++
 	if s.resetCh != nil {

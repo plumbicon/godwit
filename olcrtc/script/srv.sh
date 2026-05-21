@@ -81,18 +81,14 @@ validate_key() {
 echo "Select carrier:"
 echo "  1) jitsi"
 echo "  2) telemost"
-echo "  3) jazz"
-echo "  4) wbstream"
-read -p "Enter choice [1-4, default: 1]: " CARRIER_CHOICE
+echo "  3) wbstream"
+read -p "Enter choice [1-3, default: 1]: " CARRIER_CHOICE
 
 case "$CARRIER_CHOICE" in
     2)
         CARRIER="telemost"
         ;;
     3)
-        CARRIER="jazz"
-        ;;
-    4)
         CARRIER="wbstream"
         ;;
     *)
@@ -130,29 +126,9 @@ echo ""
 
 GEN_ROOM=0
 
-if [ "$CARRIER" = "jazz" ]; then
-    echo "Room options:"
-    echo "  1) Auto-generate new room (recommended)"
-    echo "  2) Use specific room ID"
-    read -p "Enter choice [1-2, default: 1]: " ROOM_CHOICE
-
-    case "$ROOM_CHOICE" in
-        2)
-            read -p "Enter Room ID: " ROOM_ID
-            if [ -z "$ROOM_ID" ]; then
-                echo "[X] Room ID cannot be empty"
-                exit 1
-            fi
-            ;;
-        *)
-            GEN_ROOM=1
-            ROOM_ID=""
-            echo "[*] Will generate room before starting server"
-            ;;
-    esac
-elif [ "$CARRIER" = "jitsi" ]; then
-    read -p "Jitsi base URL [default: https://meet.cryptopro.ru/]: " JITSI_BASE_INPUT
-    JITSI_BASE_URL=${JITSI_BASE_INPUT:-https://meet.cryptopro.ru/}
+if [ "$CARRIER" = "jitsi" ]; then
+    read -p "Jitsi base URL [default: https://meet.small-dm.ru/]: " JITSI_BASE_INPUT
+    JITSI_BASE_URL=${JITSI_BASE_INPUT:-https://meet.small-dm.ru/}
     JITSI_BASE_URL="${JITSI_BASE_URL%/}"
 
     echo "Room options:"

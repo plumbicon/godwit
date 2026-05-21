@@ -6,6 +6,11 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
 )
 
+const (
+	defaultFPS       = 60
+	defaultBatchSize = 64
+)
+
 // Options tunes the vp8channel transport. Zero values fall back to documented defaults.
 type Options struct {
 	FPS       int

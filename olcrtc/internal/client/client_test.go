@@ -52,9 +52,10 @@ func TestSmuxConfig(t *testing.T) {
 		t.Fatalf("smuxConfig(0) = %+v", cfg)
 	}
 	capped := smuxConfig(4096)
-	if capped.MaxFrameSize != 4096-cryptopkg.WireOverhead {
+	want := 4096 - runtime.SmuxWireOverhead
+	if capped.MaxFrameSize != want {
 		t.Fatalf("smuxConfig(4096).MaxFrameSize = %d, want %d",
-			capped.MaxFrameSize, 4096-cryptopkg.WireOverhead)
+			capped.MaxFrameSize, want)
 	}
 }
 
@@ -543,6 +544,7 @@ func (s *closerLinkStub) SetEndedCallback(func(string))   {}
 func (s *closerLinkStub) WatchConnection(context.Context) {}
 func (s *closerLinkStub) CanSend() bool                   { return true }
 func (s *closerLinkStub) Features() transport.Features    { return transport.Features{} }
+func (s *closerLinkStub) Reconnect(string)                {}
 func (s *closerLinkStub) ResetPeer()                      { s.resetCount++ }
 
 func TestOnDataWithNilConn(_ *testing.T) {

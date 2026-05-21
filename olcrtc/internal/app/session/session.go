@@ -13,10 +13,10 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/auth"
 	"github.com/openlibrecommunity/olcrtc/internal/client"
 	"github.com/openlibrecommunity/olcrtc/internal/control"
-	"github.com/openlibrecommunity/olcrtc/internal/crypto"
 	enginebuiltin "github.com/openlibrecommunity/olcrtc/internal/engine/builtin"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	"github.com/openlibrecommunity/olcrtc/internal/names"
+	"github.com/openlibrecommunity/olcrtc/internal/runtime"
 	"github.com/openlibrecommunity/olcrtc/internal/server"
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
 	"github.com/openlibrecommunity/olcrtc/internal/transport/datachannel"
@@ -29,7 +29,6 @@ const (
 	modeSRV          = "srv"
 	modeCNC          = "cnc"
 	modeGen          = "gen"
-	authJazz         = "jazz"
 	authNone         = "none"
 	transportVideo   = "videochannel"
 	transportVP8     = "vp8channel"
@@ -45,8 +44,8 @@ const (
 	defaultVideoBitrate    = "2M"
 	defaultVideoHW         = "none"
 	defaultVideoQRRecovery = "low"
-	defaultVP8FPS          = 25
-	defaultVP8BatchSize    = 1
+	defaultVP8FPS          = 60
+	defaultVP8BatchSize    = 64
 	defaultSEIFPS          = 60
 	defaultSEIBatchSize    = 64
 	defaultSEIFragmentSize = 900
@@ -64,7 +63,7 @@ var (
 	ErrAmountRequired = errors.New("amount required for gen mode (set gen.amount)")
 	// ErrAuthRequired indicates that no auth provider was selected.
 	ErrAuthRequired = errors.New(
-		"auth provider required (set auth.provider to jitsi, telemost, jazz, wbstream or none)")
+		"auth provider required (set auth.provider to jitsi, telemost, wbstream or none)")
 	// ErrURLRequired indicates that auth.url must be provided when the auth provider has no default URL.
 	ErrURLRequired = errors.New("SFU URL required (set auth.url)")
 	// ErrUnsupportedCarrier indicates that carrier is not registered.
@@ -216,11 +215,8 @@ func RegisterDefaults() {
 // For -auth none the fields are left untouched (the caller supplies them directly).
 //
 // An empty cfg.URL is acceptable when the auth provider does not advertise a
-// DefaultServiceURL — those providers (e.g. jitsi) extract the SFU host from
-// the user-supplied RoomURL inside Issue(), so an externally fixed
-// service URL would be meaningless. Providers that DO advertise a
-// DefaultServiceURL (telemost, wbstream, jazz) still require URL to be set
-// when their default cannot be applied.
+// DefaultServiceURL. Providers that DO advertise a DefaultServiceURL still
+// require URL to be set when their default cannot be applied.
 func ApplyAuthDefaults(cfg Config) (Config, error) {
 	if cfg.Auth == authNone || cfg.Auth == "" {
 		return cfg, nil
@@ -383,7 +379,7 @@ func validateTransportRegistration(cfg Config) error {
 }
 
 func validateCommon(cfg Config) error {
-	if cfg.RoomID == "" && cfg.Auth != authJazz && cfg.Auth != authNone {
+	if cfg.RoomID == "" && cfg.Auth != authNone {
 		return ErrRoomIDRequired
 	}
 	if cfg.KeyHex == "" {
@@ -553,7 +549,7 @@ func validateTrafficConfig(cfg Config) error {
 
 func trafficConfig(cfg Config) (transport.TrafficConfig, error) {
 	if cfg.TrafficMaxPayloadSize < 0 || (cfg.TrafficMaxPayloadSize > 0 &&
-		cfg.TrafficMaxPayloadSize <= crypto.WireOverhead) {
+		cfg.TrafficMaxPayloadSize < runtime.MinSmuxWirePayload) {
 		return transport.TrafficConfig{}, ErrTrafficMaxPayloadSizeInvalid
 	}
 	minDelay, err := parseOptionalNonNegativeDuration(cfg.TrafficMinDelay)

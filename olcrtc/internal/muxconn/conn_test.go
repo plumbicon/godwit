@@ -30,6 +30,7 @@ func (s *stubLink) SetReconnectCallback(func())     {}
 func (s *stubLink) SetShouldReconnect(func() bool)  {}
 func (s *stubLink) SetEndedCallback(func(string))   {}
 func (s *stubLink) WatchConnection(context.Context) {}
+func (s *stubLink) Reconnect(string)                {}
 func (s *stubLink) Features() transport.Features    { return transport.Features{} }
 func (s *stubLink) Send(data []byte) error {
 	s.mu.Lock()

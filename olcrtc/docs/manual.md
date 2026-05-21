@@ -143,22 +143,21 @@ openssl rand -hex 32
 
 ## Шаг 7: Запустить сервер
 
-На серверной машине (VPS и т.д.). Подбери нужную комбинацию carrier + transport из матрицы в [settings.md](settings.md).
+На серверной машине (VPS и т.д.). Подбери нужную комбинацию auth provider + transport из матрицы в [settings.md](settings.md).
 
 ### jitsi + datachannel (рекомендуется)
 
-Самый простой способ: используй любой self-hosted или публичный Jitsi Meet инстанс. Регистрация не нужна, имя комнаты выдумывается на лету. По умолчанию в примерах ниже — `meet.cryptopro.ru` (публичный CryptoPro Jitsi), но подойдёт любой другой (`meet.jit.si`, свой self-hosted и т.п.).
+Самый простой способ: используй любой self-hosted или публичный Jitsi Meet инстанс. Регистрация не нужна, имя комнаты выдумывается на лету. По умолчанию в примерах ниже — `meet.small-dm.ru`, но подойдёт любой другой (`meet.jit.si`, свой self-hosted и т.п.).
 
 Создай YAML конфиг:
 
 ```yaml
 # server.yaml
 mode: srv
-link: direct
 auth:
   provider: jitsi
 room:
-  id: "https://meet.cryptopro.ru/myroom"
+  id: "https://meet.small-dm.ru/myroom"
 crypto:
   key: "d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799"
 net:
@@ -186,7 +185,6 @@ data: data
 ```yaml
 # server.yaml
 mode: srv
-link: direct
 auth:
   provider: wbstream
 room:
@@ -223,18 +221,17 @@ Room ID нужно передать клиенту.
 
 ## Шаг 8: Запустить клиент
 
-На своей машине. Auth provider, transport, room ID и key должны совпадать с сервером.
+На своей машине. `auth.provider`, `net.transport`, `room.id` и `crypto.key` должны совпадать с сервером.
 
 ### jitsi + datachannel (рекомендуется)
 
 ```yaml
 # client.yaml
 mode: cnc
-link: direct
 auth:
   provider: jitsi
 room:
-  id: "https://meet.cryptopro.ru/myroom"
+  id: "https://meet.small-dm.ru/myroom"
 crypto:
   key: "<hex-key-такой-же-как-на-сервере>"
 net:
@@ -257,7 +254,6 @@ data: data
 ```yaml
 # client.yaml
 mode: cnc
-link: direct
 auth:
   provider: wbstream
 room:
@@ -288,7 +284,6 @@ SOCKS5 server listening on 127.0.0.1:8808
 ```yaml
 # client.yaml
 mode: cnc
-link: direct
 auth:
   provider: wbstream
 room:

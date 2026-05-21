@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/openlibrecommunity/olcrtc/internal/control"
-	"github.com/openlibrecommunity/olcrtc/internal/crypto"
+	"github.com/openlibrecommunity/olcrtc/internal/runtime"
 )
 
 const testBadDuration = "nope"
@@ -22,7 +22,7 @@ func TestApplyTransportDefaults(t *testing.T) {
 		{
 			name: "vp8",
 			in:   Config{Transport: transportVP8},
-			want: Config{Transport: transportVP8, VP8: VP8Config{FPS: 25, BatchSize: 1}},
+			want: Config{Transport: transportVP8, VP8: VP8Config{FPS: 60, BatchSize: 64}},
 		},
 		{
 			name: "sei",
@@ -140,15 +140,6 @@ func TestValidate(t *testing.T) {
 	}{
 		{name: "valid baseline", cfg: base},
 		{
-			name: "jazz allows empty room id",
-			cfg: func() Config {
-				cfg := base
-				cfg.Auth = "jazz"
-				cfg.RoomID = ""
-				return cfg
-			}(),
-		},
-		{
 			name: "cnc requires socks host and port",
 			cfg: func() Config {
 				cfg := base
@@ -186,7 +177,7 @@ func TestValidate(t *testing.T) {
 			want: ErrUnsupportedTransport,
 		},
 		{
-			name: "room id required for non jazz",
+			name: "room id required",
 			cfg: func() Config {
 				cfg := base
 				cfg.RoomID = ""
@@ -520,10 +511,10 @@ func TestValidate(t *testing.T) {
 			want: ErrTrafficMaxPayloadSizeInvalid,
 		},
 		{
-			name: "traffic rejects payload smaller than crypto overhead",
+			name: "traffic rejects payload too small for encrypted smux frame",
 			cfg: func() Config {
 				cfg := base
-				cfg.TrafficMaxPayloadSize = crypto.WireOverhead
+				cfg.TrafficMaxPayloadSize = runtime.MinSmuxWirePayload - 1
 				return cfg
 			}(),
 			want: ErrTrafficMaxPayloadSizeInvalid,
@@ -587,10 +578,6 @@ func TestValidateGen(t *testing.T) {
 		{
 			name: "valid wbstream",
 			cfg:  Config{Auth: testAuthWBStream, DNSServer: "1.1.1.1:53", Amount: 3},
-		},
-		{
-			name: "valid jazz",
-			cfg:  Config{Auth: "jazz", DNSServer: "1.1.1.1:53", Amount: 1},
 		},
 		{
 			name: "missing auth",

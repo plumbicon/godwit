@@ -39,6 +39,11 @@ type Transport interface {
 	WatchConnection(ctx context.Context)
 	CanSend() bool
 	Features() Features
+	// Reconnect asks the underlying carrier (engine) to tear down and
+	// re-establish the SFU connection. Upper layers call this when a
+	// liveness probe declares the link dead — useful when the engine has
+	// not yet noticed silent packet loss.
+	Reconnect(reason string)
 }
 
 // PeerTransport is implemented by transports whose carrier can identify and

@@ -96,6 +96,9 @@ func (p *streamTransport) ResetPeer() {
 	}
 }
 
+// Reconnect forwards to the underlying engine session.
+func (p *streamTransport) Reconnect(reason string) { p.session.Reconnect(reason) }
+
 // SetReconnectCallback registers reconnect handling.
 func (p *streamTransport) SetReconnectCallback(cb func()) {
 	p.session.SetReconnectCallback(func(*webrtc.DataChannel) {

@@ -106,6 +106,8 @@ func (t *trafficTransport) ResetPeer() {
 	}
 }
 
+func (t *trafficTransport) Reconnect(reason string) { t.inner.Reconnect(reason) }
+
 func (t *trafficTransport) SetReconnectCallback(cb func()) { t.inner.SetReconnectCallback(cb) }
 
 func (t *trafficTransport) SetShouldReconnect(fn func() bool) { t.inner.SetShouldReconnect(fn) }

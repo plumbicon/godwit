@@ -79,7 +79,7 @@ type Failover struct {
 
 // Auth selects the auth provider.
 type Auth struct {
-	Provider string `yaml:"provider"` // telemost, jazz, wbstream, none
+	Provider string `yaml:"provider"` // telemost, wbstream, none
 }
 
 // Room identifies the conference room.
@@ -112,7 +112,7 @@ type SOCKS struct {
 
 // Engine selects a direct SFU connection when Auth.Provider is "none".
 type Engine struct {
-	Name  string `yaml:"name"` // livekit, goolom, salutejazz
+	Name  string `yaml:"name"` // livekit, goolom, jitsi
 	URL   string `yaml:"url"`
 	Token string `yaml:"token"`
 }

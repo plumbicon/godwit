@@ -13,14 +13,12 @@ import (
 
 	"github.com/openlibrecommunity/olcrtc/internal/auth"
 	authJitsi "github.com/openlibrecommunity/olcrtc/internal/auth/jitsi"
-	authSaluteJazz "github.com/openlibrecommunity/olcrtc/internal/auth/salutejazz"
 	authTelemost "github.com/openlibrecommunity/olcrtc/internal/auth/telemost"
 	authWBStream "github.com/openlibrecommunity/olcrtc/internal/auth/wbstream"
 	"github.com/openlibrecommunity/olcrtc/internal/engine"
-	_ "github.com/openlibrecommunity/olcrtc/internal/engine/goolom"     // register goolom engine via init
-	_ "github.com/openlibrecommunity/olcrtc/internal/engine/jitsi"      // register jitsi engine via init
-	_ "github.com/openlibrecommunity/olcrtc/internal/engine/livekit"    // register livekit engine via init
-	_ "github.com/openlibrecommunity/olcrtc/internal/engine/salutejazz" // register salutejazz engine via init
+	_ "github.com/openlibrecommunity/olcrtc/internal/engine/goolom"  // register goolom engine via init
+	_ "github.com/openlibrecommunity/olcrtc/internal/engine/jitsi"   // register jitsi engine via init
+	_ "github.com/openlibrecommunity/olcrtc/internal/engine/livekit" // register livekit engine via init
 )
 
 // ErrCarrierNotFound is returned when an unregistered carrier name is requested.
@@ -75,11 +73,10 @@ func Available() []string {
 	return names
 }
 
-// RegisterDefaults wires the built-in carriers: jitsi, telemost, jazz, wbstream
+// RegisterDefaults wires the built-in carriers: jitsi, telemost, wbstream
 // and "none" (direct engine access).
 func RegisterDefaults() {
 	registerEngineAuth("wbstream", authWBStream.Provider{})
-	registerEngineAuth("jazz", authSaluteJazz.Provider{})
 	registerEngineAuth("telemost", authTelemost.Provider{})
 	registerEngineAuth("jitsi", authJitsi.Provider{})
 	registerDirect("none")

@@ -7,7 +7,7 @@ services:
     restart: unless-stopped
     environment:
       OLCRTC_MODE: srv
-      OLCRTC_CARRIER: "${OLCRTC_CARRIER:?set OLCRTC_CARRIER (jitsi, telemost, jazz, wbstream, none)}"
+      OLCRTC_CARRIER: "${OLCRTC_CARRIER:?set OLCRTC_CARRIER (jitsi, telemost, wbstream, none)}"
       OLCRTC_TRANSPORT: "${OLCRTC_TRANSPORT:-datachannel}"
       OLCRTC_ROOM_ID: "${OLCRTC_ROOM_ID:-}"
       OLCRTC_KEY: "${OLCRTC_KEY:-}"

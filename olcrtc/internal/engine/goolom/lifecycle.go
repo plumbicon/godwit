@@ -393,6 +393,19 @@ func (s *Session) queueReconnect() {
 	}
 }
 
+// Reconnect asks the goolom session to tear down its peer connections and
+// rejoin the room. Triggered by upper layers when they detect liveness loss
+// before the underlying PC has reported failure (silent black-hole on the
+// data path).
+func (s *Session) Reconnect(reason string) {
+	if s.closed.Load() {
+		return
+	}
+	logger.Infof("goolom reconnect requested: %s", reason)
+	s.stopSession()
+	s.queueReconnect()
+}
+
 func (s *Session) stopSession() {
 	s.stopTelemetry()
 	s.sessionMu.Lock()

@@ -8,7 +8,7 @@ services:
     network_mode: host
     environment:
       OLCRTC_MODE: cnc
-      OLCRTC_CARRIER: "${OLCRTC_CARRIER:?set OLCRTC_CARRIER (jitsi, telemost, jazz, wbstream, none)}"
+      OLCRTC_CARRIER: "${OLCRTC_CARRIER:?set OLCRTC_CARRIER (jitsi, telemost, wbstream, none)}"
       OLCRTC_TRANSPORT: "${OLCRTC_TRANSPORT:-datachannel}"
       OLCRTC_ROOM_ID: "${OLCRTC_ROOM_ID:?set OLCRTC_ROOM_ID to the server room}"
       OLCRTC_KEY: "${OLCRTC_KEY:?set OLCRTC_KEY to the server encryption key}"

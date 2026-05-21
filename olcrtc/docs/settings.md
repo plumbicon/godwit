@@ -12,29 +12,27 @@
 
 ## Матрица совместимости
 
-| Transport | telemost | jazz | wbstream | jitsi |
-|-----------|:--------:|:----:|:--------:|:-----:|
-| datachannel | - | ~ | ~ | + |
-| vp8channel | + | - | + | ~ |
-| seichannel | - | - | + | ~ |
-| videochannel | + | - | + | ~ |
+| Transport | telemost | wbstream | jitsi |
+|-----------|:--------:|:--------:|:-----:|
+| datachannel | - | ~ | + |
+| vp8channel | + | + | ~ |
+| seichannel | - | + | ~ |
+| videochannel | + | + | ~ |
 
 **Легенда:**
 - `+` - работает (pass в E2E тестах)
 - `-` - не работает / не поддерживается (fail в E2E тестах)
 - `~` - нестабильно (может работать, но нестабильно)
 
-**Jazz:** только datachannel проходит E2E тесты. Все non-data транспорты (vp8channel, seichannel, videochannel) не работают — Jazz не поддерживает VideoTrack для туннелирования. Кроме того, Jazz **банит IP** за паттерны datachannel трафика.
-
 **Telemost:** только vp8channel стабильно проходит. DataChannel удалён из Telemost. seichannel не поддерживается. videochannel — best effort.
 
 **WBStream:** все транспорты кроме datachannel работают. DataChannel в обычном guest flow без выдавания модератора не работает — WB Stream выдаёт токены с `canPublishData=false`, и DC не маршрутизирует данные.
 
-**Jitsi:** datachannel стабильно проходит — реализован поверх colibri-ws bridge channel и шлёт байты через `EndpointMessage{raw}` broadcast. Подходит для self-hosted и публичных Jitsi Meet инстансов без аутентификации (`https://meet.cryptopro.ru/...`, `https://meet.jit.si/...` и т.п.). Видео-транспорты (vp8channel, seichannel, videochannel) экспонируют sendable VideoTrack через pion PeerConnection после Jingle session-accept, но Jicofo требует дополнительных протокольных шагов (LastN, ReceiverVideoConstraints, source-add) для маршрутизации видео — поэтому они помечены `~` (best effort).
+**Jitsi:** datachannel стабильно проходит — реализован поверх colibri-ws bridge channel и шлёт байты через `EndpointMessage{raw}` broadcast. Подходит для self-hosted и публичных Jitsi Meet инстансов без аутентификации (`https://meet.small-dm.ru/...`, `https://meet.jit.si/...` и т.п.). Видео-транспорты (vp8channel, seichannel, videochannel) экспонируют sendable VideoTrack через pion PeerConnection после Jingle session-accept, но Jicofo требует дополнительных протокольных шагов (LastN, ReceiverVideoConstraints, source-add) для маршрутизации видео — поэтому они помечены `~` (best effort).
 
-**Jitsi + seichannel — отдельная оговорка.** SEI NAL-юниты идут пассажиром в H.264 видеопотоке, а Jicofo на self-hosted инстансах (например `meet.cryptopro.ru`) периодически режет/откладывает upstream видео когда ресивера в комнате формально нет — для нас это выглядит как `seichannel ack timeout` при формально живом PeerConnection. В steady-state транспорт работает, но e2e матрица помечает его `Unstable` (флаппит): зелёного и красного результата в CI достаточно, тест suite на этом не валится. Для надёжной передачи данных через jitsi предпочтительнее `datachannel` или `vp8channel`.
+**Jitsi + seichannel — отдельная оговорка.** SEI NAL-юниты идут пассажиром в H.264 видеопотоке, а Jicofo на self-hosted инстансах (например `meet.small-dm.ru`) периодически режет/откладывает upstream видео когда ресивера в комнате формально нет — для нас это выглядит как `seichannel ack timeout` при формально живом PeerConnection. В steady-state транспорт работает, но e2e матрица помечает его `Unstable` (флаппит): зелёного и красного результата в CI достаточно, тест suite на этом не валится. Для надёжной передачи данных через jitsi предпочтительнее `datachannel` или `vp8channel`.
 
-**Рекомендуемая комбинация: `jitsi + datachannel`** — стабильно работает на любом self-hosted или публичном Jitsi Meet (например `meet.cryptopro.ru`), не требует регистрации, простая руму создания. Альтернатива: `wbstream + vp8channel` — стабильно для коммерческих сценариев, не требует специальных прав.
+**Рекомендуемая комбинация: `jitsi + datachannel`** — стабильно работает на любом self-hosted или публичном Jitsi Meet (например `meet.small-dm.ru`), не требует регистрации, простая руму создания. Альтернатива: `wbstream + vp8channel` — стабильно для коммерческих сценариев, не требует специальных прав.
 
 Скорость по убыванию: `datachannel` > `vp8channel` > `seichannel` > `videochannel`
 
@@ -45,11 +43,10 @@
 | YAML поле | Что вводить |
 |-----------|-------------|
 | `mode` | `srv` на сервере, `cnc` на клиенте, `gen` для генерации Room ID |
-| `auth.provider` | `telemost`, `jazz`, `wbstream` или `jitsi` |
+| `auth.provider` | `telemost`, `wbstream`, `jitsi` или `none` |
 | `net.transport` | `datachannel`, `vp8channel`, `seichannel` или `videochannel` |
 | `room.id` | Room ID |
 | `crypto.key` или `crypto.key_file` | Ключ шифрования hex 64 символа. Генерация: `openssl rand -hex 32` |
-| `link` | Всегда `direct` |
 | `data` | Всегда `data` |
 | `net.dns` | DNS-сервер, например `1.1.1.1:53` |
 
@@ -99,13 +96,13 @@ transport. Используй одинаковые traffic-настройки н
 
 ## mode: gen
 
-Генерирует Room ID заранее, не запуская сервер. Поддерживается для auth-провайдеров с автосозданием комнат: `jazz` и `wbstream`. Для `telemost` комнату нужно создавать вручную через сайт.
+Генерирует Room ID заранее, не запуская сервер. Поддерживается для auth-провайдеров с автосозданием комнат: `wbstream`. Для `telemost` комнату нужно создавать вручную через сайт.
 
 **Обязательные поля:**
 
 | YAML поле | Описание |
 |-----------|----------|
-| `auth.provider` | `jazz` или `wbstream` |
+| `auth.provider` | `wbstream` |
 | `net.dns` | DNS-сервер |
 | `gen.amount` | Количество комнат |
 
@@ -167,8 +164,8 @@ gen:
 
 | YAML поле | Описание | По умолчанию |
 |-----------|----------|:------------:|
-| `vp8.fps` | FPS VP8 потока | `25` |
-| `vp8.batch_size` | Кадров за тик | `1` |
+| `vp8.fps` | FPS VP8 потока | `60` |
+| `vp8.batch_size` | Кадров за тик | `64` |
 
 ---
 
@@ -218,7 +215,6 @@ WB Stream DataChannel **не работает** в обычном guest flow —
 
 # server.yaml
 mode: srv
-link: direct
 auth:
   provider: wbstream
 room:
@@ -234,7 +230,6 @@ data: data
 ```yaml
 # client.yaml
 mode: cnc
-link: direct
 auth:
   provider: wbstream
 room:
@@ -255,7 +250,6 @@ data: data
 ```yaml
 # client.yaml с логином и паролем на прокси
 mode: cnc
-link: direct
 auth:
   provider: wbstream
 room:
@@ -287,7 +281,6 @@ export all_proxy=socks5h://myuser:mypass@127.0.0.1:8808
 ```yaml
 # server.yaml
 mode: srv
-link: direct
 auth:
   provider: telemost
 room:
@@ -306,7 +299,6 @@ data: data
 ```yaml
 # client.yaml
 mode: cnc
-link: direct
 auth:
   provider: telemost
 room:
@@ -332,7 +324,6 @@ data: data
 ```yaml
 # server.yaml
 mode: srv
-link: direct
 auth:
   provider: telemost
 room:
@@ -353,7 +344,6 @@ data: data
 ```yaml
 # client.yaml
 mode: cnc
-link: direct
 auth:
   provider: telemost
 room:
@@ -379,7 +369,6 @@ data: data
 ```yaml
 # server.yaml
 mode: srv
-link: direct
 auth:
   provider: telemost
 room:
@@ -402,7 +391,6 @@ data: data
 ```yaml
 # client.yaml
 mode: cnc
-link: direct
 auth:
   provider: telemost
 room:

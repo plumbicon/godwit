@@ -46,6 +46,7 @@ func (s *stubSession) WatchConnection(context.Context)                         {
 func (s *stubSession) CanSend() bool                                           { return s.canSend }
 func (s *stubSession) GetSendQueue() chan []byte                               { return nil }
 func (s *stubSession) GetBufferedAmount() uint64                               { return 0 }
+func (s *stubSession) Reconnect(string)                                        {}
 
 func registerCarrier(name string, sess engine.Session, err error) {
 	enginebuiltin.Register(name, func(context.Context, enginebuiltin.Config) (engine.Session, error) {

@@ -44,11 +44,14 @@ func TestSmuxConfigDefault(t *testing.T) {
 }
 
 func TestSmuxConfigShrinks(t *testing.T) {
-	// 100-byte wire payload minus crypto overhead is far below default 32768,
-	// so MaxFrameSize must shrink.
+	// 100-byte wire payload minus smux+crypto overhead is far below default
+	// 32768, so MaxFrameSize must shrink.
 	cfg := runtime.SmuxConfig(100)
 	if cfg.MaxFrameSize >= 32768 {
 		t.Fatalf("MaxFrameSize = %d, want shrunk", cfg.MaxFrameSize)
+	}
+	if cfg.MaxFrameSize+runtime.SmuxWireOverhead != 100 {
+		t.Fatalf("wire size = %d, want 100", cfg.MaxFrameSize+runtime.SmuxWireOverhead)
 	}
 }
 

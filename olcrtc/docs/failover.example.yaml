@@ -1,8 +1,7 @@
-# olcrtc failover config example
-# Use the same profile order on both peers.
+# Пример failover-конфига olcrtc
+# Используй одинаковый порядок профилей на обеих сторонах.
 
 mode: srv
-link: direct
 
 crypto:
   key_file: "./olcrtc.key"
@@ -15,11 +14,11 @@ liveness:
   timeout: 5s
   failures: 3
 
-# Optional planned rebuild for each active profile.
+# Необязательный плановый rebuild для каждого активного профиля.
 # lifecycle:
 #   max_session_duration: 6h
 
-# Optional reliability shaping for encrypted wire messages.
+# Необязательный лимит/pacing для зашифрованных wire-сообщений.
 # traffic:
 #   max_payload_size: 4096
 #   min_delay: 5ms

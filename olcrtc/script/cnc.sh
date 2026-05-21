@@ -85,18 +85,14 @@ validate_key() {
 echo "Select auth provider:"
 echo "  1) jitsi"
 echo "  2) telemost"
-echo "  3) jazz"
-echo "  4) wbstream"
-read -p "Enter choice [1-4, default: 1]: " AUTH_CHOICE
+echo "  3) wbstream"
+read -p "Enter choice [1-3, default: 1]: " AUTH_CHOICE
 
 case "$AUTH_CHOICE" in
     2)
         AUTH="telemost"
         ;;
     3)
-        AUTH="jazz"
-        ;;
-    4)
         AUTH="wbstream"
         ;;
     *)
@@ -133,8 +129,8 @@ echo "[*] Using transport: $TRANSPORT"
 echo ""
 
 if [ "$AUTH" = "jitsi" ]; then
-    read -p "Jitsi base URL [default: https://meet.cryptopro.ru/]: " JITSI_BASE_INPUT
-    JITSI_BASE_URL=${JITSI_BASE_INPUT:-https://meet.cryptopro.ru/}
+    read -p "Jitsi base URL [default: https://meet.small-dm.ru/]: " JITSI_BASE_INPUT
+    JITSI_BASE_URL=${JITSI_BASE_INPUT:-https://meet.small-dm.ru/}
     JITSI_BASE_URL="${JITSI_BASE_URL%/}"
 
     read -p "Enter Jitsi room name or URL: " JITSI_ROOM_INPUT

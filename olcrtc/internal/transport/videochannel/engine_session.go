@@ -47,6 +47,8 @@ func (v *engineVideoSession) WatchConnection(ctx context.Context) {
 }
 func (v *engineVideoSession) CanSend() bool { return v.session.CanSend() }
 
+func (v *engineVideoSession) Reconnect(reason string) { v.session.Reconnect(reason) }
+
 func (v *engineVideoSession) AddTrack(track webrtc.TrackLocal) error {
 	if err := v.vt.AddVideoTrack(track); err != nil {
 		return fmt.Errorf("add track: %w", err)

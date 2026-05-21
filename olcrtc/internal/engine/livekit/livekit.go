@@ -3,7 +3,7 @@
 //
 // This engine is service-agnostic: it accepts a wss:// signaling URL and an
 // access token, and provides byte-stream + video-track primitives over a
-// LiveKit room. Service-specific token acquisition (e.g. WB Stream, Jazz,
+// LiveKit room. Service-specific token acquisition (e.g. WB Stream,
 // or a self-hosted LiveKit deployment) lives in the auth package.
 package livekit
 
@@ -430,6 +430,17 @@ func (s *Session) queueReconnect() bool {
 	default:
 	}
 	return true
+}
+
+// Reconnect asks the LiveKit session to tear down its room handle and rejoin.
+// Triggered by upper layers when liveness probes declare the carrier dead
+// before LiveKit has noticed (silent data-path black-hole).
+func (s *Session) Reconnect(reason string) {
+	if s.closed.Load() {
+		return
+	}
+	logger.Infof("livekit reconnect requested: %s", reason)
+	s.queueReconnect()
 }
 
 func (s *Session) drainReconnectQueue() {

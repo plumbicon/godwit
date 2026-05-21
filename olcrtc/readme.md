@@ -35,12 +35,11 @@ Community ui client: [alananisimov/olcbox](https://github.com/alananisimov/olcbo
 
 [Setting matrix](docs/settings.md)
 
+[More info](docs/about.md)
+
 [Client URI format](docs/uri.md)
 
 [Client subscription format](docs/sub.md)
-
-[Read before ask](docs/about.md)
-
 
 
 ## Build

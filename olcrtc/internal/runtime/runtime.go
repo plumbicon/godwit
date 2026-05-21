@@ -17,6 +17,19 @@ import (
 	"github.com/xtaci/smux"
 )
 
+const (
+	// SmuxFrameOverhead is the fixed smux frame header size. MaxFrameSize
+	// caps only the smux payload, while muxconn encrypts and sends the whole
+	// smux frame as one transport message.
+	SmuxFrameOverhead = 8
+	// SmuxWireOverhead is the non-payload overhead added around each smux
+	// frame before it reaches the transport payload limit.
+	SmuxWireOverhead = crypto.WireOverhead + SmuxFrameOverhead
+	// MinSmuxWirePayload is the smallest useful encrypted transport payload
+	// cap that can still carry a non-empty smux frame.
+	MinSmuxWirePayload = SmuxWireOverhead + 1
+)
+
 // ErrKeyRequired is returned when no encryption key is provided.
 var ErrKeyRequired = errors.New("key required (use -key <hex>)")
 
@@ -44,15 +57,15 @@ func SetupCipher(keyHex string) (*crypto.Cipher, error) {
 
 // SmuxConfig returns the tuned smux config used on both ends. Both peers
 // must agree on Version and MaxFrameSize. maxWirePayload, when > 0,
-// constrains the max frame size to fit under the transport's per-message
-// payload cap minus the AEAD wire overhead.
+// constrains the smux payload size so the encrypted whole smux frame fits
+// under the transport's per-message payload cap.
 func SmuxConfig(maxWirePayload int) *smux.Config {
 	cfg := smux.DefaultConfig()
 	cfg.Version = 2
 	cfg.KeepAliveDisabled = false
 	cfg.MaxFrameSize = 32768
-	if maxWirePayload > crypto.WireOverhead {
-		maxFrameSize := maxWirePayload - crypto.WireOverhead
+	if maxWirePayload >= MinSmuxWirePayload {
+		maxFrameSize := maxWirePayload - SmuxWireOverhead
 		if maxFrameSize < cfg.MaxFrameSize {
 			cfg.MaxFrameSize = maxFrameSize
 		}

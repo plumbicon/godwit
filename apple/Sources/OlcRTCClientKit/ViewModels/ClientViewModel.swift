@@ -323,7 +323,7 @@ public final class ClientViewModel: ObservableObject {
         saveDraft()
         startTask?.cancel()
 
-        var profileToStart = draft.normalizedForCurrentDefaults()
+        let profileToStart = draft.normalizedForCurrentDefaults()
         if profileToStart != draft {
             draft = profileToStart
             saveDraft()
@@ -366,10 +366,6 @@ public final class ClientViewModel: ObservableObject {
                     timeoutMillis: max(options.startTimeoutMillis, ConnectionProfile.defaultStartTimeoutMillis)
                 )
                 let activePort = await engine.activeSocksPort ?? options.socksPort
-                if activePort != draft.socksPort {
-                    draft.socksPort = activePort
-                    saveDraft()
-                }
                 status = .ready
                 appendLog(AppLocalization.format("SOCKS proxy is ready on 127.0.0.1:%d.", activePort))
                 #if os(iOS)

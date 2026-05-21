@@ -11,11 +11,11 @@
 //	conn, err := sess.Dial(ctx)  // blocks until WebRTC data channel is ready
 //	// conn implements net.Conn — pass it to sing-box / any io.ReadWriter consumer
 //
-// Built-in auth providers (jitsi, telemost, jazz, wbstream):
+// Built-in auth providers (jitsi, telemost, wbstream):
 //
 //	sess, err := olcrtc.New(ctx, olcrtc.Config{
 //	    Auth:   "jitsi",
-//	    RoomID: "https://meet.cryptopro.ru/myroom",
+//	    RoomID: "https://meet.small-dm.ru/myroom",
 //	})
 //
 // Import the implementations you need via blank imports, or call [RegisterDefaults]:
@@ -52,13 +52,13 @@ var (
 // Config is the input to [New].
 type Config struct {
 	// --- built-in auth mode ---
-	// Auth is the name of a registered auth provider ("jitsi", "telemost", "jazz", "wbstream").
+	// Auth is the name of a registered auth provider ("jitsi", "telemost", "wbstream").
 	// When set, RoomID is forwarded to the provider as the room reference.
 	Auth   string
 	RoomID string
 
 	// --- direct engine mode (Auth == "") ---
-	// Engine selects the SFU protocol ("livekit", "goolom", "salutejazz").
+	// Engine selects the SFU protocol ("livekit", "goolom", "jitsi").
 	// Defaults to "livekit" when Auth is empty.
 	Engine string
 	URL    string
@@ -77,9 +77,9 @@ type Config struct {
 // Session is the library handle returned by [New].
 // Call [Session.Dial] to connect and obtain a [net.Conn].
 type Session struct {
-	inner    engine.Session
-	pr       *io.PipeReader
-	pw       *io.PipeWriter
+	inner        engine.Session
+	pr           *io.PipeReader
+	pw           *io.PipeWriter
 	authProvider auth.Provider
 	authCfg      auth.Config
 }
@@ -241,7 +241,7 @@ func (s *Session) SetShouldReconnect(fn func() bool) {
 
 // CreateRoom creates a new room via the auth provider and returns the room ID.
 // Only works when the session was created with Auth set to a provider that
-// supports room creation (wbstream, jazz). Returns [ErrRoomCreationUnsupported]
+// supports room creation (wbstream). Returns [ErrRoomCreationUnsupported]
 // for providers that don't support it (e.g. telemost).
 func CreateRoom(ctx context.Context, authName string) (string, error) {
 	p, err := auth.Get(authName)

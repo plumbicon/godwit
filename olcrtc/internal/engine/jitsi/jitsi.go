@@ -12,7 +12,7 @@
 //
 // The Jingle session-initiate is only delivered by Jicofo once at least one
 // other participant is present in the conference, mirroring the Telemost /
-// SaluteJazz two-peer requirement that olcrtc already accommodates.
+// two-peer tunnel model that olcrtc already accommodates.
 package jitsi
 
 import (
@@ -138,7 +138,7 @@ type bridgeOutbound struct {
 
 // New creates a new Jitsi engine session.
 //
-// cfg.URL carries the Jitsi host (e.g. "meet.cryptopro.ru") — populated by the
+// cfg.URL carries the Jitsi host (e.g. "meet.small-dm.ru") — populated by the
 // jitsi auth provider after parsing the user-supplied room URL. cfg.Extra
 // must contain the room name under the "room" key.
 func New(_ context.Context, cfg engine.Config) (engine.Session, error) {
@@ -1061,6 +1061,11 @@ func (s *Session) WatchConnection(ctx context.Context) {
 		}
 	}
 }
+
+// Reconnect asks the jitsi session to tear down its bridge connection and
+// re-establish it. Triggered by upper layers when liveness probes declare the
+// carrier dead before jitsi has noticed.
+func (s *Session) Reconnect(reason string) { s.requestReconnect(reason) }
 
 func (s *Session) requestReconnect(reason string) {
 	s.bridgeReady.Store(false)

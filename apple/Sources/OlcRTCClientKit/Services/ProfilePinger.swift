@@ -45,6 +45,8 @@ public enum ProfilePingError: LocalizedError, Equatable {
 }
 
 public struct ProfilePinger: ProfilePinging {
+    private static let portLeases = ProfilePingPortLeases()
+
     private let timeoutMillis: Int
     private let pingURL: URL
 
@@ -57,24 +59,32 @@ public struct ProfilePinger: ProfilePinging {
     }
 
     public func ping(profile: ConnectionProfile) async throws -> ProfilePingResult {
-        let profile = preparedProfileForPing(profile)
+        let socksPort = await Self.portLeases.reserveTemporaryPort()
+        let profile = preparedProfileForPing(profile, socksPort: socksPort)
 
-        #if canImport(Mobile)
-        return try await pingWithMobile(profile: profile)
-        #elseif os(macOS)
-        return try await pingWithProcess(profile: profile)
-        #else
-        throw ProfilePingError.unsupportedPlatform
-        #endif
+        do {
+            #if canImport(Mobile)
+            let result = try await pingWithMobile(profile: profile)
+            #elseif os(macOS)
+            let result = try await pingWithProcess(profile: profile)
+            #else
+            throw ProfilePingError.unsupportedPlatform
+            #endif
+            await Self.portLeases.release(socksPort)
+            return result
+        } catch {
+            await Self.portLeases.release(socksPort)
+            throw error
+        }
     }
 
-    private func preparedProfileForPing(_ profile: ConnectionProfile) -> ConnectionProfile {
+    private func preparedProfileForPing(_ profile: ConnectionProfile, socksPort: Int) -> ConnectionProfile {
         var profile = profile.normalizedForCurrentDefaults()
         let baseClientID = profile.clientID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? profile.id.uuidString
             : profile.clientID.trimmingCharacters(in: .whitespacesAndNewlines)
         profile.clientID = "\(baseClientID)-ping-\(UUID().uuidString.prefix(8))"
-        profile.socksPort = PortAvailability.nextAvailableTCPPort(startingAt: profile.socksPort)
+        profile.socksPort = socksPort
         profile.socksUser = ""
         profile.socksPass = ""
         return profile
@@ -186,4 +196,29 @@ public struct ProfilePinger: ProfilePinging {
         return max(1, Int(Date().timeIntervalSince(startedAt) * 1_000))
     }
     #endif
+}
+
+private actor ProfilePingPortLeases {
+    private var leasedPorts: Set<Int> = []
+
+    func reserveTemporaryPort() -> Int {
+        let range = 49_152...65_535
+        for port in Array(range).shuffled() where !leasedPorts.contains(port) && PortAvailability.isLocalTCPPortAvailable(port) {
+            leasedPorts.insert(port)
+            return port
+        }
+
+        for port in ConnectionProfile.socksPortRange where !leasedPorts.contains(port) && PortAvailability.isLocalTCPPortAvailable(port) {
+            leasedPorts.insert(port)
+            return port
+        }
+
+        let fallback = PortAvailability.randomAvailableTCPPort()
+        leasedPorts.insert(fallback)
+        return fallback
+    }
+
+    func release(_ port: Int) {
+        leasedPorts.remove(port)
+    }
 }

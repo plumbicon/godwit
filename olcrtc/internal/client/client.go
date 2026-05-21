@@ -146,26 +146,16 @@ func RunWithReady(ctx context.Context, cfg Config, onReady func()) error {
 	// that bringUpLink hadn't populated yet.
 	defer c.shutdown()
 
+	if err := c.bringUpLink(runCtx, cfg, cancel); err != nil {
+		return err
+	}
+
 	lc := net.ListenConfig{}
 	listener, err := lc.Listen(runCtx, "tcp4", cfg.LocalAddr)
 	if err != nil {
 		return fmt.Errorf("failed to listen on %s: %w", cfg.LocalAddr, err)
 	}
 	defer func() { _ = listener.Close() }()
-
-	listenerClosed := make(chan struct{})
-	go func() {
-		select {
-		case <-runCtx.Done():
-			_ = listener.Close()
-		case <-listenerClosed:
-		}
-	}()
-	defer close(listenerClosed)
-
-	if err := c.bringUpLink(runCtx, cfg, cancel); err != nil {
-		return err
-	}
 
 	logger.Infof("SOCKS5 server listening on %s", cfg.LocalAddr)
 
@@ -212,9 +202,11 @@ func (c *Client) bringUpLink(
 		if ctx.Err() != nil {
 			return
 		}
-		if !c.handleReconnect(ctx, cfg, cancel, "carrier") {
-			cancel()
-		}
+		// Carrier callback fires after the link is back up. If handshake
+		// still fails it usually means the server hasn't completed its
+		// own reinstall yet — keep the listener up and wait for either
+		// another callback or a future liveness loss to re-trigger.
+		c.handleReconnect(ctx, cfg, cancel, "carrier")
 	})
 
 	if err := ln.Connect(ctx); err != nil {
@@ -334,7 +326,7 @@ func linkMaxPayload(tr transport.Transport) int {
 	return runtime.MaxPayload(tr)
 }
 
-func (c *Client) handleReconnect(ctx context.Context, cfg Config, cancel context.CancelFunc, reason string) bool {
+func (c *Client) handleReconnect(ctx context.Context, cfg Config, cancel context.CancelFunc, reason string) {
 	c.reconnectMu.Lock()
 	defer c.reconnectMu.Unlock()
 
@@ -372,28 +364,54 @@ func (c *Client) handleReconnect(ctx context.Context, cfg Config, cancel context
 		_ = oldControl.Close()
 	}
 
-	// Server-side may still be tearing down its own session when our callback
-	// fires — carriers don't guarantee reconnect callbacks are delivered to both
-	// peers atomically. Retry the handshake a few times, building a fresh
-	// muxconn+smux pair on each attempt so a failed smux.Close doesn't corrupt
-	// the byte stream for subsequent attempts.
+	// When liveness on top of a still-"connected" carrier expires, the
+	// underlying ICE/data path has gone silent without the engine noticing.
+	// Re-handshaking over the dead carrier just times out repeatedly, so
+	// ask the carrier to rebuild itself; the new carrier will fire its own
+	// reconnect callback which then drives a fresh handshake.
+	if reason == "liveness" && c.ln != nil {
+		c.ln.Reconnect("liveness")
+	}
+
+	c.retryHandshake(ctx, cfg, cancel, reason)
+}
+
+func (c *Client) retryHandshake(ctx context.Context, cfg Config, cancel context.CancelFunc, reason string) {
 	const (
-		maxAttempts  = 5
-		attemptDelay = 300 * time.Millisecond
+		initialDelay = 300 * time.Millisecond
+		maxDelay     = 5 * time.Second
 	)
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
+	delay := initialDelay
+	for attempt := 1; ; attempt++ {
+		if ctx.Err() != nil {
+			return
+		}
 		logger.Infof("client reconnect attempt=%d reason=%s", attempt, reason)
 		if c.tryReopenSession(ctx, cfg, cancel, attempt) {
-			return true
+			return
+		}
+		// Don't fail the whole process on liveness reconnect: the carrier
+		// rebuild may take dozens of seconds (e.g. ICE restart on a flaky
+		// network). Keep the SOCKS5 listener open and wait — handleSocks5
+		// will return host-unreachable to clients until we recover. For
+		// carrier-driven reconnects the callback fires after the link is
+		// already up, so a missed handshake is more suspicious; cap it.
+		if reason == "carrier" && attempt >= 5 {
+			logger.Warnf("client reconnect: exhausted %d handshake attempts (reason=%s) — keeping listener up", attempt, reason)
+			return
 		}
 		select {
 		case <-ctx.Done():
-			return false
-		case <-time.After(attemptDelay):
+			return
+		case <-time.After(delay):
+		}
+		if delay < maxDelay {
+			delay *= 2
+			if delay > maxDelay {
+				delay = maxDelay
+			}
 		}
 	}
-	logger.Warnf("client reconnect: exhausted %d handshake attempts", maxAttempts)
-	return false
 }
 
 func (c *Client) resetLinkPeer() {
@@ -491,9 +509,9 @@ func (c *Client) startControlLoop(
 		if err != nil {
 			logger.Warnf("client control stream ended: %v", err)
 		}
-		if !c.handleReconnect(ctx, cfg, cancel, "liveness") {
-			cancel()
-		}
+		// handleReconnect now retries indefinitely on liveness so it only
+		// returns false on ctx cancellation; don't tear down the client.
+		c.handleReconnect(ctx, cfg, cancel, "liveness")
 	}()
 }
 

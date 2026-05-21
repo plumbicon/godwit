@@ -79,6 +79,7 @@ type videoSession interface {
 	SetEndedCallback(cb func(string))
 	WatchConnection(ctx context.Context)
 	CanSend() bool
+	Reconnect(reason string)
 	AddTrack(track webrtc.TrackLocal) error
 	SetTrackHandler(cb func(*webrtc.TrackRemote, *webrtc.RTPReceiver))
 }
@@ -249,6 +250,11 @@ func (p *streamTransport) Close() error {
 // SetReconnectCallback registers reconnect handling.
 func (p *streamTransport) SetReconnectCallback(cb func()) {
 	p.stream.SetReconnectCallback(cb)
+}
+
+// Reconnect forwards to the underlying engine session.
+func (p *streamTransport) Reconnect(reason string) {
+	p.stream.Reconnect(reason)
 }
 
 // SetShouldReconnect configures reconnect policy.

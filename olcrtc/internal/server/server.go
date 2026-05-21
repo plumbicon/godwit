@@ -702,6 +702,13 @@ func (s *Server) startControlLoop(ctx context.Context, sess *smux.Session, strea
 		logger.Infof("server reconnect reason=liveness - reinstalling smux session")
 		s.resetLinkPeer()
 		s.reinstallSession(sess)
+		// Tell the carrier to rebuild itself too. Without this the SFU side
+		// keeps its dead PC around and the client's reconnect handshakes
+		// keep landing in the void until the carrier eventually notices on
+		// its own (which observationally takes ~40s on a Telemost room).
+		if s.ln != nil {
+			s.ln.Reconnect("liveness")
+		}
 	}()
 }
 
