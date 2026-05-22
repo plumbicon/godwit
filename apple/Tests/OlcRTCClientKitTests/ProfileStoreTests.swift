@@ -32,4 +32,26 @@ final class ProfileStoreTests: XCTestCase {
 
         XCTAssertEqual(store.loadProfiles(), [profile])
     }
+
+    func testPersistsSystemProxyPreference() {
+        let store = ProfileStore(defaults: defaults)
+
+        XCTAssertFalse(store.hasUseSystemProxyPreference())
+        XCTAssertTrue(store.loadUseSystemProxy(defaultValue: true))
+
+        store.saveUseSystemProxy(false)
+
+        XCTAssertTrue(store.hasUseSystemProxyPreference())
+        XCTAssertFalse(ProfileStore(defaults: defaults).loadUseSystemProxy(defaultValue: true))
+    }
+
+    func testPersistsSelectedNetworkService() {
+        let store = ProfileStore(defaults: defaults)
+
+        XCTAssertEqual(store.loadSelectedNetworkService(), "Wi-Fi")
+
+        store.saveSelectedNetworkService("Thunderbolt Bridge")
+
+        XCTAssertEqual(ProfileStore(defaults: defaults).loadSelectedNetworkService(), "Thunderbolt Bridge")
+    }
 }

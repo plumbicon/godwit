@@ -480,7 +480,7 @@ private struct CreateProfileSheet: View {
                 useSystemProxy: .constant(false),
                 selectedNetworkService: .constant("Wi-Fi"),
                 networkServices: [],
-                validationMessage: currentValidationMessage,
+                validationMessage: nil,
                 startsAdvancedExpanded: true,
                 onCommit: {}
             )

@@ -24,6 +24,8 @@
 "Imported olcRTC profile link." = "Импортирована olcRTC-ссылка профиля.";
 "Could not import profile: %@" = "Не удалось импортировать профиль: %@";
 "SOCKS port %d is busy. Stop the existing process or choose another port." = "SOCKS-порт %d занят. Остановите существующий процесс или выберите другой порт.";
+"SOCKS port %d appears busy; trying olcRTC start anyway." = "SOCKS-порт %d выглядит занятым; всё равно пробуем запустить olcRTC.";
+"SOCKS port %d is still being released; retrying." = "SOCKS-порт %d ещё освобождается; повторяем попытку.";
 "Profile is incomplete: %@" = "Профиль заполнен не полностью: %@";
 "Connecting: %@." = "Подключение: %@.";
 "SOCKS proxy is ready on 127.0.0.1:%d." = "SOCKS-прокси готов на 127.0.0.1:%d.";

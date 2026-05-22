@@ -11,17 +11,13 @@ private let profileEditorNumberFieldWidth: CGFloat = 56
 private let profileEditorLabelMinWidth: CGFloat = 0
 private let profileEditorRowSpacing: CGFloat = 8
 private let profileEditorSpacerMinLength: CGFloat = 8
-private let profileEditorConnectionRowBottomInset: CGFloat = 0
 #else
 private let profileEditorTextFieldWidth: CGFloat = profileEditorValueColumnWidth
 private let profileEditorNumberFieldWidth: CGFloat = 64
 private let profileEditorLabelMinWidth: CGFloat = 170
 private let profileEditorRowSpacing: CGFloat = 12
 private let profileEditorSpacerMinLength: CGFloat = 16
-private let profileEditorConnectionRowBottomInset: CGFloat = 0
 #endif
-private let profileEditorConnectionRowHeight: CGFloat = 38
-private let profileEditorProfileRowHeight: CGFloat = 38
 private let videoCodecOptions = ["qrcode", "tile"]
 private let videoHardwareOptions = ["none", "nvenc"]
 private let videoQRRecoveryOptions = ["low", "medium", "high", "highest"]
@@ -111,23 +107,98 @@ public struct ProfileEditorView: View {
             }
 
             Section {
-                ConnectionSettingsCard(
-                    profile: $profile,
-                    isExpanded: $isAdvancedExpanded,
-                    onCommit: onCommit
-                )
-                #if os(macOS)
-                .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))
-                #endif
+                connectionHeaderRow
+
+                if isAdvancedExpanded {
+                    ConnectionTextRow(
+                        title: profile.carrier == .jitsi ? "Room URL" : "Room ID",
+                        text: $profile.roomID,
+                        onCommit: onCommit
+                    )
+
+                    ConnectionSecureRow(title: "Ключ", text: $profile.keyHex, onCommit: onCommit)
+
+                    switch profile.transport {
+                    case .vp8channel:
+                        ConnectionNumberRow(title: "FPS", value: $profile.vp8FPS, range: 1...120, showsStepper: true)
+                        ConnectionNumberRow(
+                            title: "Размер пакета",
+                            value: $profile.vp8BatchSize,
+                            range: 1...128,
+                            showsStepper: true
+                        )
+
+                    case .seichannel:
+                        ConnectionNumberRow(title: "FPS", value: $profile.seiFPS, range: 1...120, showsStepper: true)
+                        ConnectionNumberRow(
+                            title: "Размер пакета",
+                            value: $profile.seiBatchSize,
+                            range: 1...128,
+                            showsStepper: true
+                        )
+                        ConnectionNumberRow(
+                            title: "Размер фрагмента",
+                            value: $profile.seiFragmentSize,
+                            range: 64...4_096
+                        )
+                        ConnectionAckTimeoutRow(
+                            title: "ACK таймаут",
+                            value: $profile.seiAckTimeoutMillis,
+                            range: 100...10_000
+                        )
+
+                    case .videochannel:
+                        ConnectionPickerRow(title: "Кодек", selection: $profile.videoCodec, options: videoCodecOptions)
+                        ConnectionNumberRow(title: "Ширина", value: $profile.videoWidth, range: 1...7_680)
+                        ConnectionNumberRow(title: "Высота", value: $profile.videoHeight, range: 1...4_320)
+                        ConnectionNumberRow(title: "FPS", value: $profile.videoFPS, range: 1...120, showsStepper: true)
+                        ConnectionTextRow(title: "Битрейт", text: $profile.videoBitrate, onCommit: onCommit)
+                        ConnectionPickerRow(
+                            title: "Ускорение",
+                            selection: $profile.videoHardwareAcceleration,
+                            options: videoHardwareOptions
+                        )
+                        ConnectionPickerRow(
+                            title: "QR коррекция",
+                            selection: $profile.videoQRRecovery,
+                            options: videoQRRecoveryOptions
+                        )
+                        ConnectionNumberRow(title: "QR фрагмент", value: $profile.videoQRSize, range: 0...65_535)
+
+                        if profile.videoCodec == "tile" {
+                            ConnectionNumberRow(title: "Размер тайла", value: $profile.videoTileModule, range: 1...270)
+                            ConnectionNumberRow(title: "RS паритет, %", value: $profile.videoTileRS, range: 0...200)
+                        }
+
+                    case .datachannel:
+                        EmptyView()
+                    }
+                }
             }
         }
         .formStyle(.grouped)
-        #if os(iOS)
-        .font(.subheadline)
-        .environment(\.defaultMinListRowHeight, 38)
-        .environment(\.defaultMinListHeaderHeight, 22)
-        #endif
         .onDisappear(perform: onCommit)
+    }
+
+    private var connectionHeaderRow: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.16)) {
+                isAdvancedExpanded.toggle()
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: isAdvancedExpanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(width: 14)
+
+                Text("Подключение")
+                    .font(.headline)
+
+                Spacer()
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -139,7 +210,6 @@ private struct ProfileNameRow: View {
         TextField("Название профиля", text: $name)
             .olcNativeInput()
             .onSubmit(onCommit)
-            .frame(height: profileEditorProfileRowHeight, alignment: .center)
     }
 }
 
@@ -161,117 +231,6 @@ private struct ProfilePickerRow<Option>: View where Option: CaseIterable & Hasha
             }
             .labelsHidden()
             .frame(maxWidth: profileEditorValueColumnWidth, alignment: .trailing)
-        }
-        .frame(height: profileEditorProfileRowHeight, alignment: .center)
-    }
-}
-
-private struct ConnectionSettingsCard: View {
-    @Binding var profile: ConnectionProfile
-    @Binding var isExpanded: Bool
-    let onCommit: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.16)) {
-                    isExpanded.toggle()
-                }
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 12, weight: .semibold))
-                        .frame(width: 14)
-
-                    Text("Подключение")
-                        .font(.headline)
-
-                    Spacer()
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .padding(.vertical, 10)
-
-            if isExpanded {
-                VStack(spacing: 0) {
-                    ConnectionTextRow(
-                        title: profile.carrier == .jitsi ? "Room URL" : "Room ID",
-                        text: $profile.roomID,
-                        onCommit: onCommit
-                    )
-                    Divider()
-
-                    ConnectionSecureRow(title: "Ключ", text: $profile.keyHex, onCommit: onCommit)
-
-                    transportRows
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var transportRows: some View {
-        switch profile.transport {
-        case .vp8channel:
-            Divider()
-            ConnectionNumberRow(title: "FPS", value: $profile.vp8FPS, range: 1...120)
-            Divider()
-            ConnectionNumberRow(title: "Размер пакета", value: $profile.vp8BatchSize, range: 1...128)
-
-        case .seichannel:
-            Divider()
-            ConnectionNumberRow(title: "FPS", value: $profile.seiFPS, range: 1...120)
-            Divider()
-            ConnectionNumberRow(title: "Размер пакета", value: $profile.seiBatchSize, range: 1...128)
-            Divider()
-            ConnectionNumberRow(
-                title: "Размер фрагмента",
-                value: $profile.seiFragmentSize,
-                range: 64...4_096
-            )
-            Divider()
-            ConnectionAckTimeoutRow(
-                title: "ACK таймаут",
-                value: $profile.seiAckTimeoutMillis,
-                range: 100...10_000
-            )
-
-        case .videochannel:
-            Divider()
-            ConnectionPickerRow(title: "Кодек", selection: $profile.videoCodec, options: videoCodecOptions)
-            Divider()
-            ConnectionNumberRow(title: "Ширина", value: $profile.videoWidth, range: 1...7_680)
-            Divider()
-            ConnectionNumberRow(title: "Высота", value: $profile.videoHeight, range: 1...4_320)
-            Divider()
-            ConnectionNumberRow(title: "FPS", value: $profile.videoFPS, range: 1...120)
-            Divider()
-            ConnectionTextRow(title: "Битрейт", text: $profile.videoBitrate, onCommit: onCommit)
-            Divider()
-            ConnectionPickerRow(
-                title: "Ускорение",
-                selection: $profile.videoHardwareAcceleration,
-                options: videoHardwareOptions
-            )
-            Divider()
-            ConnectionPickerRow(
-                title: "QR коррекция",
-                selection: $profile.videoQRRecovery,
-                options: videoQRRecoveryOptions
-            )
-            Divider()
-            ConnectionNumberRow(title: "QR фрагмент", value: $profile.videoQRSize, range: 0...65_535)
-
-            if profile.videoCodec == "tile" {
-                Divider()
-                ConnectionNumberRow(title: "Размер тайла", value: $profile.videoTileModule, range: 1...270)
-                Divider()
-                ConnectionNumberRow(title: "RS паритет, %", value: $profile.videoTileRS, range: 0...200)
-            }
-
-        case .datachannel:
-            EmptyView()
         }
     }
 }
@@ -327,8 +286,6 @@ private struct ConnectionAckTimeoutRow: View {
                 }
                 .frame(alignment: .trailing)
         }
-        .padding(.bottom, profileEditorConnectionRowBottomInset)
-        .frame(height: profileEditorConnectionRowHeight, alignment: .center)
     }
 }
 
@@ -353,9 +310,9 @@ private struct ConnectionPickerRow: View {
                 }
             }
             .labelsHidden()
+            .controlSize(.small)
             .frame(maxWidth: profileEditorValueColumnWidth, alignment: .trailing)
         }
-        .frame(height: profileEditorConnectionRowHeight)
     }
 }
 
@@ -396,8 +353,6 @@ private struct ConnectionTextRow: View {
                 .onSubmit(onCommit)
             #endif
         }
-        .padding(.bottom, profileEditorConnectionRowBottomInset)
-        .frame(height: profileEditorConnectionRowHeight, alignment: .center)
     }
 }
 
@@ -430,8 +385,6 @@ private struct ConnectionSecureRow: View {
                 }
                 .onSubmit(onCommit)
         }
-        .padding(.bottom, profileEditorConnectionRowBottomInset)
-        .frame(height: profileEditorConnectionRowHeight, alignment: .center)
     }
 }
 
@@ -440,6 +393,8 @@ private struct ConnectionNumberRow: View {
     @Binding var value: Int
     let range: ClosedRange<Int>
     var suffix = ""
+    var showsStepper = false
+    var step = 1
     @FocusState private var isFocused: Bool
 
     private var clampedValue: Binding<Int> {
@@ -478,11 +433,16 @@ private struct ConnectionNumberRow: View {
                         .foregroundStyle(.secondary)
                         .frame(width: 28, alignment: .leading)
                 }
+
+                if showsStepper {
+                    Stepper("", value: clampedValue, in: range, step: step)
+                        .labelsHidden()
+                        .fixedSize()
+                        .controlSize(.small)
+                }
             }
             .frame(alignment: .trailing)
         }
-        .padding(.bottom, profileEditorConnectionRowBottomInset)
-        .frame(height: profileEditorConnectionRowHeight, alignment: .center)
     }
 }
 

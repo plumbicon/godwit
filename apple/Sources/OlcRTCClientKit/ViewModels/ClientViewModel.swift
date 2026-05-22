@@ -7,6 +7,9 @@ private enum RunningMode {
     #endif
 }
 
+private let portConflictRetryAttempts = 10
+private let portConflictRetryDelayNanoseconds: UInt64 = 200_000_000
+
 @MainActor
 public final class ClientViewModel: ObservableObject {
     @Published public private(set) var profiles: [ConnectionProfile]
@@ -14,12 +17,16 @@ public final class ClientViewModel: ObservableObject {
     @Published public var draft: ConnectionProfile
     @Published public private(set) var status: ClientStatus = .stopped
     @Published public private(set) var logs: [String] = []
-    #if os(iOS)
-    @Published public var useSystemProxy: Bool
-    #else
-    @Published public var useSystemProxy = true
-    #endif
-    @Published public var selectedNetworkService = "Wi-Fi"
+    @Published public var useSystemProxy: Bool {
+        didSet {
+            store.saveUseSystemProxy(useSystemProxy)
+        }
+    }
+    @Published public var selectedNetworkService: String {
+        didSet {
+            store.saveSelectedNetworkService(selectedNetworkService)
+        }
+    }
     @Published public private(set) var networkServices: [String] = ["Wi-Fi"]
     @Published public private(set) var isImporting = false
     @Published public private(set) var importErrorMessage: String?
@@ -61,9 +68,15 @@ public final class ClientViewModel: ObservableObject {
         self.subscriptionFetcher = subscriptionFetcher
         self.profilePinger = profilePinger
         self.systemProxyManager = systemProxyManager
+
         #if os(iOS)
-        useSystemProxy = false
+        let defaultUseSystemProxy = false
+        #else
+        let defaultUseSystemProxy = true
         #endif
+        let hasStoredUseSystemProxy = store.hasUseSystemProxyPreference()
+        useSystemProxy = store.loadUseSystemProxy(defaultValue: defaultUseSystemProxy)
+        selectedNetworkService = store.loadSelectedNetworkService()
 
         let storedProfiles = store.loadProfiles()
         let loadedProfiles = storedProfiles.map { $0.normalizedForCurrentDefaults() }
@@ -80,7 +93,9 @@ public final class ClientViewModel: ObservableObject {
         observeEngineEvents()
         loadNetworkServices()
         #if os(iOS)
-        enableSystemVPNByDefaultIfAvailable()
+        if !hasStoredUseSystemProxy {
+            enableSystemVPNByDefaultIfAvailable()
+        }
         #endif
     }
 
@@ -336,13 +351,12 @@ public final class ClientViewModel: ObservableObject {
         }
 
         if !PortAvailability.isLocalTCPPortAvailable(profileToStart.socksPort) {
-            let message = AppLocalization.format(
-                "SOCKS port %d is busy. Stop the existing process or choose another port.",
-                profileToStart.socksPort
+            appendLog(
+                AppLocalization.format(
+                    "SOCKS port %d appears busy; trying olcRTC start anyway.",
+                    profileToStart.socksPort
+                )
             )
-            status = .failed(message)
-            appendLog(message)
-            return
         }
 
         #if os(iOS)
@@ -361,11 +375,7 @@ public final class ClientViewModel: ObservableObject {
             guard let self else { return }
 
             do {
-                try await engine.start(options: options)
-                try await engine.waitReady(
-                    timeoutMillis: max(options.startTimeoutMillis, ConnectionProfile.defaultStartTimeoutMillis)
-                )
-                let activePort = await engine.activeSocksPort ?? options.socksPort
+                let activePort = try await startEngineUntilReady(options: options)
                 status = .ready
                 appendLog(AppLocalization.format("SOCKS proxy is ready on 127.0.0.1:%d.", activePort))
                 #if os(iOS)
@@ -387,6 +397,57 @@ public final class ClientViewModel: ObservableObject {
                 await engine.stop()
             }
         }
+    }
+
+    private func startEngineUntilReady(options: OlcRTCStartOptions) async throws -> Int {
+        for attempt in 0...portConflictRetryAttempts {
+            do {
+                try await engine.start(options: options)
+                try await engine.waitReady(
+                    timeoutMillis: max(options.startTimeoutMillis, ConnectionProfile.defaultStartTimeoutMillis)
+                )
+                return await engine.activeSocksPort ?? options.socksPort
+            } catch {
+                await engine.stop()
+
+                guard !(error is CancellationError) else {
+                    throw error
+                }
+
+                guard attempt < portConflictRetryAttempts,
+                      isSocksPortConflict(error, port: options.socksPort) else {
+                    throw error
+                }
+
+                appendLog(
+                    AppLocalization.format(
+                        "SOCKS port %d is still being released; retrying.",
+                        options.socksPort
+                    )
+                )
+                try await Task.sleep(nanoseconds: portConflictRetryDelayNanoseconds)
+            }
+        }
+
+        throw OlcRTCEngineError.invalidProfile(
+            AppLocalization.format(
+                "SOCKS port %d is busy. Stop the existing process or choose another port.",
+                options.socksPort
+            )
+        )
+    }
+
+    private func isSocksPortConflict(_ error: Error, port: Int) -> Bool {
+        let message = error.localizedDescription.lowercased()
+        let localizedBusyPort = AppLocalization.format(
+            "SOCKS port %d is busy. Stop the existing process or choose another port.",
+            port
+        ).lowercased()
+
+        return message.contains(localizedBusyPort) ||
+            message.contains("address already in use") ||
+            message.contains("failed to listen") ||
+            message.contains("bind")
     }
 
     public func stop() {

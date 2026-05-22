@@ -5,6 +5,8 @@ public final class ProfileStore {
     private let secretStore: ProfileSecretStore
     private let profilesKey = "olcrtc.apple.profiles.v1"
     private let selectedKey = "olcrtc.apple.selectedProfile.v1"
+    private let useSystemProxyKey = "olcrtc.apple.useSystemProxy.v1"
+    private let selectedNetworkServiceKey = "olcrtc.apple.selectedNetworkService.v1"
 
     public init(
         defaults: UserDefaults = .standard,
@@ -58,5 +60,32 @@ public final class ProfileStore {
 
     public func saveSelectedProfileID(_ id: UUID?) {
         defaults.set(id?.uuidString, forKey: selectedKey)
+    }
+
+    public func hasUseSystemProxyPreference() -> Bool {
+        defaults.object(forKey: useSystemProxyKey) != nil
+    }
+
+    public func loadUseSystemProxy(defaultValue: Bool) -> Bool {
+        guard let value = defaults.object(forKey: useSystemProxyKey) as? Bool else {
+            return defaultValue
+        }
+        return value
+    }
+
+    public func saveUseSystemProxy(_ value: Bool) {
+        defaults.set(value, forKey: useSystemProxyKey)
+    }
+
+    public func loadSelectedNetworkService(defaultValue: String = "Wi-Fi") -> String {
+        guard let value = defaults.string(forKey: selectedNetworkServiceKey),
+              !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return defaultValue
+        }
+        return value
+    }
+
+    public func saveSelectedNetworkService(_ value: String) {
+        defaults.set(value, forKey: selectedNetworkServiceKey)
     }
 }

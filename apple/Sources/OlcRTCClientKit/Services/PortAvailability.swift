@@ -53,6 +53,15 @@ public enum PortAvailability {
         }
         defer { close(fileDescriptor) }
 
+        var reuseAddress: Int32 = 1
+        _ = setsockopt(
+            fileDescriptor,
+            SOL_SOCKET,
+            SO_REUSEADDR,
+            &reuseAddress,
+            socklen_t(MemoryLayout<Int32>.size)
+        )
+
         var address = sockaddr_in()
         address.sin_len = UInt8(MemoryLayout<sockaddr_in>.stride)
         address.sin_family = sa_family_t(AF_INET)
@@ -68,7 +77,11 @@ public enum PortAvailability {
             }
         }
 
-        return result == 0
+        guard result == 0 else {
+            return false
+        }
+
+        return listen(fileDescriptor, 1) == 0
         #else
         return true
         #endif
