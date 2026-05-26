@@ -1,8 +1,8 @@
 # Godwit
 
-<img width="1206" height="640" alt="Image" src="https://github.com/user-attachments/assets/3535120e-48e1-4b34-9344-a61282bfe6f1" />
+<img height="640" alt="Image" src="https://github.com/user-attachments/assets/3535120e-48e1-4b34-9344-a61282bfe6f1" />
 
-<img width="652" height="640" alt="Image" src="https://github.com/user-attachments/assets/a32de5b6-3921-4c59-a68d-b9f0f0dcdd7b" />
+<img height="640" alt="Image" src="https://github.com/user-attachments/assets/a32de5b6-3921-4c59-a68d-b9f0f0dcdd7b" />
 
 macOS/iOS-клиент Godwit для olcRTC.
 
