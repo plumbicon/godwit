@@ -11,6 +11,10 @@ public enum AppLocalization {
         Locale.current.region?.identifier == "RU" ? "ru_RU" : "en_US"
     }
 
+    public static var timeLanguageCode: String {
+        string("updated %@ ago").hasPrefix("обновлено") ? "ru" : "en"
+    }
+
     public static func string(_ key: String) -> String {
         NSLocalizedString(key, bundle: localizationBundle, value: key, comment: "")
     }

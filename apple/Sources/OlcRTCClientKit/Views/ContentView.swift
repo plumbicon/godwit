@@ -1033,24 +1033,10 @@ private struct SubscriptionSelectionRow: View {
 
     private func lastRefreshText(since date: Date, now: Date) -> String {
         let elapsed = max(0, now.timeIntervalSince(date))
-        return AppLocalization.format("updated %@ ago", abbreviatedDuration(elapsed))
-    }
-
-    private func abbreviatedDuration(_ interval: TimeInterval) -> String {
-        let seconds = max(0, Int(interval.rounded(.down)))
-        let isRussian = AppLocalization.localeIdentifier.hasPrefix("ru")
-        let units: [(value: Int, en: String, ru: String)] = [
-            (86_400, "d", "д"),
-            (3_600, "h", "ч"),
-            (60, "min", "мин"),
-            (1, "s", "с"),
-        ]
-
-        for unit in units where seconds >= unit.value {
-            return "\(seconds / unit.value)\(isRussian ? unit.ru : unit.en)"
-        }
-
-        return isRussian ? "0с" : "0s"
+        return AppLocalization.format(
+            "updated %@ ago",
+            SubscriptionRefreshInterval.abbreviatedString(from: elapsed)
+        )
     }
 }
 
@@ -1343,8 +1329,7 @@ private struct SubscriptionDetailView: View {
 
                 LabeledContent("Серверы", value: "\(group.profiles.count)")
 
-                if let refreshInterval = group.metadata.refreshInterval?.trimmingCharacters(in: .whitespacesAndNewlines),
-                   !refreshInterval.isEmpty {
+                if let refreshInterval = SubscriptionRefreshInterval.localizedString(from: group.metadata.refreshInterval) {
                     LabeledContent("Интервал автообновления", value: refreshInterval)
                 }
 
