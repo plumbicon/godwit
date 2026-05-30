@@ -3,7 +3,6 @@ import Foundation
 public enum Carrier: String, CaseIterable, Codable, Identifiable {
     case jitsi
     case telemost
-    case jazz
     case wbstream
 
     public var id: String { rawValue }
@@ -12,11 +11,17 @@ public enum Carrier: String, CaseIterable, Codable, Identifiable {
         switch self {
         case .jitsi: "Jitsi"
         case .telemost: "Telemost"
-        case .jazz: "Jazz"
         case .wbstream: "WBStream"
         }
     }
 
+    public var allowedTransports: [Transport] {
+        switch self {
+        case .telemost: [.vp8channel, .videochannel]
+        case .wbstream: [.datachannel, .vp8channel, .seichannel, .videochannel]
+        case .jitsi:    [.datachannel, .vp8channel, .seichannel, .videochannel]
+        }
+    }
 }
 
 public enum Transport: String, CaseIterable, Codable, Identifiable {

@@ -147,7 +147,7 @@ public final class GomobileOlcRTCEngine: OlcRTCEngine {
         if options.keyHex.count != 64 || !options.keyHex.allSatisfy(\.isHexDigit) {
             throw OlcRTCEngineError.invalidProfile("Encryption key must be 64 hexadecimal characters.")
         }
-        if options.carrierName != "jazz" && options.roomID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if options.roomID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let fieldName = options.carrierName == "jitsi" ? "Room URL" : "Room ID"
             throw OlcRTCEngineError.invalidProfile("\(fieldName) is required for this carrier.")
         }

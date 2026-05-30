@@ -100,8 +100,17 @@ public struct ProfileEditorView: View {
                 ProfilePickerRow(title: "Провайдер", selection: $profile.carrier) { carrier in
                     carrier.title
                 }
+                .onChange(of: profile.carrier) { newCarrier in
+                    if !newCarrier.allowedTransports.contains(profile.transport) {
+                        profile.transport = newCarrier.allowedTransports[0]
+                    }
+                }
 
-                ProfilePickerRow(title: "Транспорт", selection: $profile.transport) { transport in
+                ProfilePickerRow(
+                    title: "Транспорт",
+                    selection: $profile.transport,
+                    options: profile.carrier.allowedTransports
+                ) { transport in
                     transport.title
                 }
             }
@@ -216,6 +225,7 @@ private struct ProfileNameRow: View {
 private struct ProfilePickerRow<Option>: View where Option: CaseIterable & Hashable & Identifiable {
     let title: String
     @Binding var selection: Option
+    var options: [Option]?
     let optionTitle: (Option) -> String
 
     var body: some View {
@@ -225,7 +235,7 @@ private struct ProfilePickerRow<Option>: View where Option: CaseIterable & Hasha
             Spacer(minLength: profileEditorSpacerMinLength)
 
             Picker("", selection: $selection) {
-                ForEach(Array(Option.allCases)) { option in
+                ForEach(options ?? Array(Option.allCases)) { option in
                     Text(optionTitle(option)).tag(option)
                 }
             }

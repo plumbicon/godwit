@@ -1160,7 +1160,7 @@ public final class ClientViewModel: ObservableObject {
         if profile.keyHex.count != 64 || !profile.keyHex.allSatisfy(\.isHexDigit) {
             return AppLocalization.string("The key must contain 64 hexadecimal characters.")
         }
-        if profile.carrier != .jazz && profile.roomID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if profile.roomID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return profile.carrier == .jitsi
                 ? AppLocalization.string("Enter a Room URL for Jitsi.")
                 : AppLocalization.string("This provider requires a Room ID.")
