@@ -1,0 +1,115 @@
+name: Nightly Build
+
+on:
+  schedule:
+    - cron: '0 1 * * *'  # 04:00 МСК
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-tags: true
+
+      - name: Check for changes since last nightly
+        id: check
+        run: |
+          CURRENT_SHA=$(git rev-parse HEAD)
+          LAST_SHA=$(git rev-parse refs/tags/nightly 2>/dev/null || echo "")
+          if [ "$CURRENT_SHA" = "$LAST_SHA" ]; then
+            echo "Нет новых коммитов с последней ночной сборки — пропускаем"
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Обнаружены изменения (HEAD=$CURRENT_SHA, last nightly=${LAST_SHA:-нет})"
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: check-changes
+    if: needs.check-changes.outputs.should_build == 'true'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone olcrtc
+        run: git clone --depth 1 https://github.com/openlibrecommunity/olcrtc olcrtc
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: olcrtc/go.sum
+
+      - name: Accept Xcode license
+        run: sudo xcodebuild -license accept
+
+      - name: Build macOS app (release)
+        env:
+          CONFIGURATION: release
+          OLCRTC_REPO_ROOT: ${{ github.workspace }}/olcrtc
+        run: |
+          ./apple/Scripts/build-macos-app.sh --olcrtc-root "$OLCRTC_REPO_ROOT"
+          cd apple/.build
+          zip -qry Godwit-macOS-unsigned.zip Godwit.app
+
+      - name: Install gomobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          gomobile init
+
+      - name: Build iOS unsigned IPA
+        env:
+          OLCRTC_REPO_ROOT: ${{ github.workspace }}/olcrtc
+        run: ./apple/Scripts/build-ios-unsigned-local-ipa.sh --olcrtc-root "$OLCRTC_REPO_ROOT"
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p dist
+          cp apple/.build/Godwit-macOS-unsigned.zip dist/
+          cp apple/.build/ios-unsigned-local/Godwit-unsigned-local.ipa dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nightly-artifacts
+          path: dist/
+
+  release:
+    needs: [check-changes, build]
+    if: needs.check-changes.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: nightly-artifacts
+          path: dist/
+
+      - name: Publish nightly release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          CURRENT_SHA=$(git rev-parse HEAD)
+          DATE=$(date -u '+%Y-%m-%d')
+
+          gh release delete nightly --yes --cleanup-tag 2>/dev/null || true
+
+          gh release create nightly \
+            --title "Nightly ${DATE}" \
+            --notes "**Коммит:** \`${CURRENT_SHA}\`
+
+Автоматическая ночная сборка. Неподписанные клиенты для macOS и iOS.
+
+**macOS** — при первом запуске появится предупреждение Gatekeeper: нажмите правой кнопкой → «Открыть».
+**iOS** — собран с флагом \`LOCAL_SOCKS_ONLY\` без расширения Packet Tunnel. Для установки используйте AltStore или sideload." \
+            --prerelease \
+            dist/Godwit-macOS-unsigned.zip \
+            dist/Godwit-unsigned-local.ipa
