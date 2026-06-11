@@ -283,12 +283,15 @@ public final class ClientViewModel: ObservableObject {
         let subscriptionName = profilesToPing.first?.subscription?.name ?? AppLocalization.string("subscription")
         appendLog(AppLocalization.format("Pinging subscription %@: %d profile(s).", subscriptionName, profilesToPing.count))
 
-        // Ping every profile in the subscription at once.
+        // Probe profiles one at a time: a single olcRTC tunnel at a time avoids the local
+        // contention that made concurrent pings time out. Every queued profile is marked as
+        // pinging up front, so the UI spins a circle on all of them immediately; each
+        // performPing then clears its own spinner and publishes its result as it finishes.
         subscriptionPingTasks[id] = Task { [weak self] in
             guard let self else { return }
             defer { subscriptionPingTasks[id] = nil }
 
-            // Validate up front; queue only the profiles worth pinging.
+            // Validate up front; queue only the profiles worth pinging and mark them pinging.
             var queue: [ConnectionProfile] = []
             for profile in profilesToPing {
                 // Skip profiles already being pinged on their own to avoid double work.
@@ -306,13 +309,19 @@ public final class ClientViewModel: ObservableObject {
                     continue
                 }
 
+                pingingProfileIDs.insert(profile.id)
+                pingResults[profile.id] = nil
                 queue.append(profile)
             }
 
-            await withTaskGroup(of: Void.self) { group in
-                for profile in queue {
-                    group.addTask { await self.performPing(profile) }
-                }
+            for profile in queue {
+                if Task.isCancelled { break }
+                await performPing(profile)
+            }
+
+            // Drop spinners for any profiles left unprobed (e.g. cancelled mid-run).
+            for profile in queue where pingingProfileIDs.contains(profile.id) {
+                pingingProfileIDs.remove(profile.id)
             }
         }
     }
