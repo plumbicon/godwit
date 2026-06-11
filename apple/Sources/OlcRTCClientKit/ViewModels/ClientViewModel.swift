@@ -77,7 +77,6 @@ public final class ClientViewModel: ObservableObject {
     private var automaticRefreshTaskTokens: [UUID: UUID] = [:]
     private var automaticRefreshConfigurations: [UUID: AutomaticSubscriptionRefreshConfiguration] = [:]
     private var automaticRefreshAttemptedAt: [UUID: Date] = [:]
-    private static let maxConcurrentPings = 4
     private var pingTasks: [UUID: Task<Void, Never>] = [:]
     private var subscriptionPingTasks: [UUID: Task<Void, Never>] = [:]
     private var runningMode: RunningMode?
@@ -284,9 +283,7 @@ public final class ClientViewModel: ObservableObject {
         let subscriptionName = profilesToPing.first?.subscription?.name ?? AppLocalization.string("subscription")
         appendLog(AppLocalization.format("Pinging subscription %@: %d profile(s).", subscriptionName, profilesToPing.count))
 
-        // Each ping spins up a full olcRTC tunnel, so unbounded concurrency starves
-        // CPU/network and makes healthy profiles time out at random. Cap the number of
-        // simultaneous pings instead.
+        // Ping every profile in the subscription at once.
         subscriptionPingTasks[id] = Task { [weak self] in
             guard let self else { return }
             defer { subscriptionPingTasks[id] = nil }
@@ -312,22 +309,9 @@ public final class ClientViewModel: ObservableObject {
                 queue.append(profile)
             }
 
-            var index = 0
             await withTaskGroup(of: Void.self) { group in
-                func addNext() {
-                    guard index < queue.count else { return }
-                    let profile = queue[index]
-                    index += 1
+                for profile in queue {
                     group.addTask { await self.performPing(profile) }
-                }
-
-                for _ in 0..<min(Self.maxConcurrentPings, queue.count) {
-                    addNext()
-                }
-
-                while await group.next() != nil {
-                    if Task.isCancelled { break }
-                    addNext()
                 }
             }
         }
