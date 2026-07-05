@@ -69,3 +69,6 @@
 "Profile ping is not supported on this platform." = "Пинг профиля не поддерживается на этой платформе.";
 "Ping finished without a result." = "Пинг завершился без результата.";
 "HTTP ping returned status %d." = "HTTP-пинг вернул статус %d.";
+"UDP режим" = "UDP режим";
+"TCP relay" = "TCP relay";
+"UDP relay" = "UDP relay";

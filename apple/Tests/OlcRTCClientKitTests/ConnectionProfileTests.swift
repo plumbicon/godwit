@@ -24,6 +24,39 @@ final class ConnectionProfileTests: XCTestCase {
         XCTAssertEqual(profile.socksPort, ConnectionProfile.defaultSocksPort)
     }
 
+    func testDecodingMissingPacketTunnelUDPModeUsesTCPRelay() throws {
+        let id = UUID()
+        let data = Data(
+            """
+            {
+              "id": "\(id.uuidString)",
+              "name": "Legacy"
+            }
+            """.utf8
+        )
+
+        let profile = try JSONDecoder().decode(ConnectionProfile.self, from: data)
+
+        XCTAssertEqual(profile.packetTunnelUDPMode, .tcp)
+    }
+
+    func testKeepsConfiguredPacketTunnelUDPMode() throws {
+        let id = UUID()
+        let data = Data(
+            """
+            {
+              "id": "\(id.uuidString)",
+              "name": "UDP",
+              "packetTunnelUDPMode": "udp"
+            }
+            """.utf8
+        )
+
+        let profile = try JSONDecoder().decode(ConnectionProfile.self, from: data)
+
+        XCTAssertEqual(profile.packetTunnelUDPMode, .udp)
+    }
+
     func testDecodingReservedSocksPortUsesDefaultSocksPort() throws {
         let id = UUID()
         let data = Data(

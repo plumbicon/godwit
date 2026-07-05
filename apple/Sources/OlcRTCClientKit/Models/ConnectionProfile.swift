@@ -62,6 +62,7 @@ public struct ConnectionProfile: Codable, Equatable, Identifiable {
     public var socksPort: Int
     public var socksUser: String
     public var socksPass: String
+    public var packetTunnelUDPMode: PacketTunnelUDPMode
     public var dnsServer: String
     public var debugLogging: Bool
     public var vp8FPS: Int
@@ -94,6 +95,7 @@ public struct ConnectionProfile: Codable, Equatable, Identifiable {
         socksPort: Int = Self.defaultSocksPort,
         socksUser: String = "",
         socksPass: String = "",
+        packetTunnelUDPMode: PacketTunnelUDPMode = .tcp,
         dnsServer: String = "77.88.8.8:53",
         debugLogging: Bool = false,
         vp8FPS: Int = 60,
@@ -125,6 +127,7 @@ public struct ConnectionProfile: Codable, Equatable, Identifiable {
         self.socksPort = Self.normalizedSocksPort(socksPort)
         self.socksUser = socksUser
         self.socksPass = socksPass
+        self.packetTunnelUDPMode = packetTunnelUDPMode
         self.dnsServer = dnsServer
         self.debugLogging = debugLogging
         self.vp8FPS = vp8FPS
@@ -158,6 +161,7 @@ public struct ConnectionProfile: Codable, Equatable, Identifiable {
         case socksPort
         case socksUser
         case socksPass
+        case packetTunnelUDPMode
         case dnsServer
         case debugLogging
         case vp8FPS
@@ -193,6 +197,10 @@ public struct ConnectionProfile: Codable, Equatable, Identifiable {
         socksPort = Self.normalizedSocksPort(decodedSocksPort ?? Self.defaultSocksPort)
         socksUser = try container.decodeIfPresent(String.self, forKey: .socksUser) ?? ""
         socksPass = try container.decodeIfPresent(String.self, forKey: .socksPass) ?? ""
+        packetTunnelUDPMode = try container.decodeIfPresent(
+            PacketTunnelUDPMode.self,
+            forKey: .packetTunnelUDPMode
+        ) ?? .tcp
         dnsServer = try container.decodeIfPresent(String.self, forKey: .dnsServer) ?? "77.88.8.8:53"
         debugLogging = try container.decodeIfPresent(Bool.self, forKey: .debugLogging) ?? false
         vp8FPS = try container.decodeIfPresent(Int.self, forKey: .vp8FPS) ?? 60

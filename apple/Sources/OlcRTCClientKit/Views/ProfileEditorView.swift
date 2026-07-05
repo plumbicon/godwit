@@ -127,6 +127,10 @@ public struct ProfileEditorView: View {
 
                     ConnectionSecureRow(title: "Ключ", text: $profile.keyHex, onCommit: onCommit)
 
+                    ProfilePickerRow(title: "UDP режим", selection: $profile.packetTunnelUDPMode) { mode in
+                        mode.title
+                    }
+
                     switch profile.transport {
                     case .vp8channel:
                         ConnectionNumberRow(title: "FPS", value: $profile.vp8FPS, range: 1...120, showsStepper: true)

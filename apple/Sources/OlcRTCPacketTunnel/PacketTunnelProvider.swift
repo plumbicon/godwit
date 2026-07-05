@@ -98,6 +98,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             .appendingPathComponent("olcrtc-tun2socks.yml")
         try tun2socksConfiguration(
             socksPort: socksPort,
+            udpMode: configuration.packetTunnelUDPMode,
             debugLogging: configuration.debugLogging
         ).write(to: fileURL, atomically: true, encoding: .utf8)
         configFileURL = fileURL
@@ -123,6 +124,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 
     private func tun2socksConfiguration(
         socksPort: Int,
+        udpMode: PacketTunnelUDPMode,
         debugLogging: Bool
     ) -> String {
         """
@@ -132,7 +134,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         socks5:
           port: \(socksPort)
           address: 127.0.0.1
-          udp: 'tcp'
+          udp: '\(udpMode.rawValue)'
         mapdns:
           address: \(Constants.mapDNSAddress)
           port: 53

@@ -62,7 +62,10 @@ xcodebuild -list -project apple/Godwit.xcodeproj
 ## Ограничения
 
 - iOS Packet Tunnel сейчас сфокусирован на TCP и DNS-over-tunnel поведении.
-  Произвольный UDP forwarding еще не является полноценным production path.
+  Произвольный UDP forwarding можно включить в настройках профиля через UDP
+  Mode, но режим по умолчанию остается TCP relay для совместимости с текущими
+  стабильными olcRTC-сборками. UDP relay рассчитан на olcRTC builds, где SOCKS5
+  UDP/datagram path уже поддерживается.
 - iOS local SOCKS mode использует background audio mode, чтобы процесс
   продолжал работать после сворачивания приложения. Это удобно для sideloaded
   local testing; для системного iOS-трафика нужен сторонний маршрутизатор

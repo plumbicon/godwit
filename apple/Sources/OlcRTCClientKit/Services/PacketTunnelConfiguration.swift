@@ -24,6 +24,7 @@ public struct PacketTunnelConfiguration: Equatable {
         static let socksPort = "socksPort"
         static let socksUser = "socksUser"
         static let socksPass = "socksPass"
+        static let packetTunnelUDPMode = "packetTunnelUDPMode"
         static let dnsServer = "dnsServer"
         static let debugLogging = "debugLogging"
         static let vp8FPS = "vp8FPS"
@@ -53,6 +54,7 @@ public struct PacketTunnelConfiguration: Equatable {
     public var socksPort: Int
     public var socksUser: String
     public var socksPass: String
+    public var packetTunnelUDPMode: PacketTunnelUDPMode
     public var dnsServer: String
     public var debugLogging: Bool
     public var vp8FPS: Int
@@ -82,6 +84,7 @@ public struct PacketTunnelConfiguration: Equatable {
         socksPort = profile.socksPort
         socksUser = profile.socksUser
         socksPass = profile.socksPass
+        packetTunnelUDPMode = profile.packetTunnelUDPMode
         dnsServer = profile.dnsServer
         debugLogging = profile.debugLogging
         vp8FPS = profile.vp8FPS
@@ -117,6 +120,7 @@ public struct PacketTunnelConfiguration: Equatable {
         socksPort = try Self.intValue(Key.socksPort, from: values)
         socksUser = Self.optionalStringValue(Key.socksUser, from: values)
         socksPass = Self.optionalStringValue(Key.socksPass, from: values)
+        packetTunnelUDPMode = Self.optionalUDPModeValue(Key.packetTunnelUDPMode, from: values) ?? .tcp
         dnsServer = try Self.stringValue(Key.dnsServer, from: values)
         debugLogging = Self.boolValue(Key.debugLogging, from: values)
         vp8FPS = Self.optionalIntValue(Key.vp8FPS, from: values) ?? 60
@@ -153,6 +157,7 @@ public struct PacketTunnelConfiguration: Equatable {
             Key.socksPort: socksPort as NSNumber,
             Key.socksUser: socksUser as NSString,
             Key.socksPass: socksPass as NSString,
+            Key.packetTunnelUDPMode: packetTunnelUDPMode.rawValue as NSString,
             Key.dnsServer: dnsServer as NSString,
             Key.debugLogging: debugLogging as NSNumber,
             Key.vp8FPS: vp8FPS as NSNumber,
@@ -182,6 +187,7 @@ public struct PacketTunnelConfiguration: Equatable {
             Key.roomID: roomID as NSString,
             Key.clientID: clientID as NSString,
             Key.socksPort: socksPort as NSNumber,
+            Key.packetTunnelUDPMode: packetTunnelUDPMode.rawValue as NSString,
             Key.dnsServer: dnsServer as NSString,
             Key.debugLogging: debugLogging as NSNumber,
             Key.vp8FPS: vp8FPS as NSNumber,
@@ -215,6 +221,7 @@ public struct PacketTunnelConfiguration: Equatable {
             socksPort: socksPort,
             socksUser: socksUser,
             socksPass: socksPass,
+            packetTunnelUDPMode: packetTunnelUDPMode,
             dnsServer: dnsServer,
             debugLogging: debugLogging,
             vp8FPS: vp8FPS,
@@ -292,5 +299,25 @@ public struct PacketTunnelConfiguration: Equatable {
             return number.boolValue
         }
         return false
+    }
+
+    private static func optionalUDPModeValue(
+        _ key: String,
+        from values: [String: Any]
+    ) -> PacketTunnelUDPMode? {
+        if let mode = values[key] as? PacketTunnelUDPMode {
+            return mode
+        }
+        if let string = values[key] as? String {
+            return PacketTunnelUDPMode(rawValue: normalizedUDPMode(string))
+        }
+        if let string = values[key] as? NSString {
+            return PacketTunnelUDPMode(rawValue: normalizedUDPMode(string as String))
+        }
+        return nil
+    }
+
+    private static func normalizedUDPMode(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 }
